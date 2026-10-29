@@ -12,8 +12,9 @@
 //                                          SPACE  sustain pedal
 // Strips: in CHORD or RATCHET the top row's 12 keys stop playing notes. Hold
 // one and the notes you play take its chord, or re-strike at its rate.
-// Tilt: switching it on takes the current angle as level; tilting from there
-// bends TIMBRE and MORPH around their set values.
+// Tilt: while on, the device's attitude sets TIMBRE (side to side, 0 on its
+// left edge, 1 on its right) and MORPH (0 flat, 0.8 standing up, 1 tipped
+// past upright) directly (ui/tilt.h); switching off returns their set values.
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
 // q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
 // BS undo the last dice. Holding a param, volume, root or tempo combo repeats.
@@ -31,6 +32,7 @@
 #include "synth/instrument.h"
 #include "ui/keymap.h"
 #include "ui/surface.h"
+#include "ui/tilt.h"
 
 namespace {
 
@@ -60,9 +62,6 @@ constexpr uint32_t kRepeatDelayMs = 300;
 constexpr uint32_t kDiceHoldMs = 500;     // hold the dice key this long to roll
 constexpr uint32_t kDrawMs = 33;          // redraw at most ~30 Hz
 constexpr uint8_t  kVelocity = 100;
-// Tilt: this much change in one gravity axis (in g, ~45 degrees) moves its
-// control by kTiltRange.
-constexpr float kTiltFullG = 0.7f, kTiltRange = 0.5f;
 
 enum class Strip : uint8_t { Notes, Chord, Ratchet, Count };
 const char* stripName(Strip s) {
@@ -82,7 +81,7 @@ struct Ui {
   float root = 0.0f;         // semitones above C, 0..12, fractional off 12-EDO
   int   dacVol = kDacDefault;
   float params[(int)pd::Param::Count] = {0.0f, 0.75f, 0.0f, 0.5f};   // as set
-  float tiltOff[(int)pd::Param::Count] = {};
+  float tiltVal[(int)pd::Param::Count] = {};   // tilt's TIMBRE and MORPH, while on
   float sent[(int)pd::Param::Count] = {-1.0f, -1.0f, -1.0f, -1.0f};  // last sent
   float undo[(int)pd::Param::Count] = {};
   bool  canUndo = false;
@@ -94,7 +93,6 @@ struct Ui {
   int   slotKey = -1;        // which key that is
   float bpm = 120.0f;
   bool  fn = false, sustain = false, tilt = false;
-  float tiltRef[3] = {};
   bool  sounding[kKeys] = {};    // key has voices gated under its tag
   bool  sustained[kKeys] = {};   // ...only because the pedal is down
   bool  physical[kKeys] = {};    // key is physically down (and played a note)
@@ -116,7 +114,8 @@ void send(pd::EventType t, uint8_t a, uint8_t b = 0, float v = 0.0f) {
 
 void flash(const char* m) { g_ui.msg = m; g_ui.msgUntil = millis() + 1500; g_ui.dirty = true; }
 
-float effective(int p) { return pd::clamp(g_ui.params[p] + g_ui.tiltOff[p], 0.0f, 1.0f); }
+bool tilted(int p) { return g_ui.tilt && (p == (int)pd::Param::Timbre || p == (int)pd::Param::Morph); }
+float effective(int p) { return tilted(p) ? g_ui.tiltVal[p] : g_ui.params[p]; }
 
 // Send the controls (set value + tilt) that have moved since last sent.
 void pushParams() {
@@ -184,15 +183,17 @@ void readAccel(float* a) {
 void toggleTilt() {
   if (g_ui.tilt) {
     g_ui.tilt = false;
-    for (float& o : g_ui.tiltOff) o = 0.0f;
     pushParams();
     flash("TILT OFF");
     return;
   }
   if (!M5.Imu.isEnabled()) { flash("NO IMU"); return; }
-  readAccel(g_ui.tiltRef);
+  float a[3];
+  readAccel(a);
+  g_ui.tiltVal[(int)pd::Param::Timbre] = pd::tilt::timbre(a[0], a[1], a[2]);   // start where it is,
+  g_ui.tiltVal[(int)pd::Param::Morph] = pd::tilt::morph(a[0], a[1], a[2]);     // no glide in
   g_ui.tilt = true;
-  Serial.printf("tilt level: accel %+.2f %+.2f %+.2f g\n", g_ui.tiltRef[0], g_ui.tiltRef[1], g_ui.tiltRef[2]);
+  pushParams();
   flash("TILT ON");
 }
 
@@ -200,14 +201,10 @@ void serviceTilt() {
   if (!g_ui.tilt) return;
   float a[3];
   readAccel(a);
-  const float target[2] = {
-    pd::clamp((a[0] - g_ui.tiltRef[0]) / kTiltFullG, -1.0f, 1.0f) * kTiltRange,
-    pd::clamp((a[1] - g_ui.tiltRef[1]) / kTiltFullG, -1.0f, 1.0f) * kTiltRange,
-  };
-  float& t = g_ui.tiltOff[(int)pd::Param::Timbre];
-  float& m = g_ui.tiltOff[(int)pd::Param::Morph];
-  t += 0.3f * (target[0] - t);
-  m += 0.3f * (target[1] - m);
+  float& t = g_ui.tiltVal[(int)pd::Param::Timbre];
+  float& m = g_ui.tiltVal[(int)pd::Param::Morph];
+  t += 0.3f * (pd::tilt::timbre(a[0], a[1], a[2]) - t);   // ~30 ms smoothing at 100 Hz
+  m += 0.3f * (pd::tilt::morph(a[0], a[1], a[2]) - m);
   pushParams();
 }
 
@@ -427,8 +424,7 @@ void drawBar(int y, const char* name, int p) {
   d.print(name);
   d.drawRect(64, y, 172, 12, TFT_DARKGREY);
   d.fillRect(65, y + 1, 170, 10, TFT_BLACK);
-  d.fillRect(65, y + 1, (int)(170 * g_ui.params[p]), 10, TFT_ORANGE);
-  if (g_ui.tiltOff[p] != 0.0f) d.fillRect(65 + (int)(168 * effective(p)), y + 1, 2, 10, TFT_WHITE);
+  d.fillRect(65, y + 1, (int)(170 * effective(p)), 10, tilted(p) ? TFT_GREEN : TFT_ORANGE);
 }
 
 void rootLabel(char* buf, size_t n) {
@@ -529,11 +525,11 @@ void cpuBench() {
 }
 
 void printState(const pd::audio::Stats& s) {
-  Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(%+.2f,%+.2f) voices=%d "
+  Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(t%.2f,m%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
                 "h=%.2f t=%.2f m=%.2f x=%.2f\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
-                g_ui.sustain, g_ui.tilt, g_ui.tiltOff[1], g_ui.tiltOff[2], g_synth.activeVoices(),
+                g_ui.sustain, g_ui.tilt, effective(1), effective(2), g_synth.activeVoices(),
                 (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
                 (unsigned long)(s.loadPeakPermil / 10), (unsigned long)(s.loadPeakPermil % 10),
                 (unsigned long)s.lateWrites, (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave, g_ui.root, g_ui.bpm,
