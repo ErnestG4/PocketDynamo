@@ -382,7 +382,36 @@ void setup() {
   redraw("-");
 }
 
+#ifndef SYNTH_USB_MIDI
+// PERF BENCH: send 'B' over USB serial. Holds a full N_VOICES chord on the
+// current source, times BENCH_BLOCKS render blocks, prints avg/peak µs against
+// the CHUNK budget, then releases the chord. Repeatable A/B for engine changes.
+static constexpr int BENCH_BLOCKS = 250;   // ~2 s @ 256/32k
+static void perfBench() {
+  static const int notes[N_VOICES] = {48, 52, 55, 60, 64, 67};
+  for (int i = 0; i < N_VOICES; i++) noteOnMidi((char)(0x10 + i), notes[i], 100);
+  uint32_t sum = 0, peak = 0;
+  for (int n = 0; n < BENCH_BLOCKS; n++) {
+    while (M5.Speaker.isPlaying(0) >= 2) delay(0);
+    renderChunk();
+    sum += g_renderUs;
+    if (g_renderUs > peak) peak = g_renderUs;
+  }
+  for (int i = 0; i < N_VOICES; i++) {
+    int vi = synth::findVoiceByKey(g_voices, N_VOICES, (char)(0x10 + i));
+    if (vi >= 0) { g_voices[vi].env1.gateOff(); g_voices[vi].env2.gateOff(); g_voices[vi].key = 0; }
+  }
+  Serial.printf("bench voices=%d src=%s blocks=%d avg_us=%lu peak_us=%lu budget_us=%lu\n",
+                N_VOICES, g_samplerMode ? "sampler" : synth::shapeName(g_wave), BENCH_BLOCKS,
+                (unsigned long)(sum / BENCH_BLOCKS), (unsigned long)peak,
+                (unsigned long)(CHUNK * 1000000UL / SR));
+}
+#endif
+
 void loop() {
+#ifndef SYNTH_USB_MIDI
+  if (Serial.available() && Serial.read() == 'B') perfBench();
+#endif
 #ifdef SYNTH_USB_MIDI
   usbMidi.read();
 #endif

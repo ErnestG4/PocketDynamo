@@ -87,4 +87,4 @@ Full architecture and the phased build plan are in
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+AGPL-3.0-or-later — see [LICENSE](LICENSE). cardputer-synth's own code is MIT ([LICENSE-cardputer-synth](LICENSE-cardputer-synth)).
