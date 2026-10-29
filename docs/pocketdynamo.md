@@ -1,14 +1,16 @@
 # Playing PocketDynamo
 
-PocketDynamo is the `pd` firmware (`pio run -e pd`): an 8-voice instrument for
-the Cardputer ADV built around old-school synthesis techniques. Every engine
-has the same four controls, HARMONICS, TIMBRE, MORPH and MACRO (MACRO 0.5 is
-neutral), plus pitch.
+PocketDynamo is an 8-voice instrument for the M5Stack Cardputer ADV, built
+around old-school synthesis techniques. Every engine has the same four
+controls, **HARMONICS, TIMBRE, MORPH and MACRO** (MACRO's middle is neutral).
+The keys give the pitch.
+
+It starts on ZX PULSE, the MAJOR 4THS surface, root C3, 120 bpm, at +6 dB.
 
 ## The keyboard
 
-Columns 1–12 of all four rows play notes. The key next to `ctrl` on the bottom
-row is the root. The two outer columns are controls:
+Columns 1–12 of all four rows play notes. The bottom-left note key (`opt`) is
+the root. The two outer columns are controls:
 
 | Left | | Right | |
 |---|---|---|---|
@@ -17,40 +19,52 @@ row is the root. The two outer columns are controls:
 | `fn` | function layer | `enter` | all notes off |
 | `ctrl` | **tilt** on/off | `space` | **sustain pedal** |
 
-### Surfaces (`tab`)
+The keys aren't velocity-sensitive, and all notes play at one level. Releasing a
+key starts its engine's release: short for the buzzers and stabs, about 3 s
+for MODAL so bells ring out.
+
+### Surfaces (`tab`, FN+`tab` back)
 
 Most surfaces are isomorphic: one column right is one scale step, and one row
-up is a fourth. A chord shape is the same anywhere on the grid.
+up is a fourth. A chord or melody shape is the same anywhere on the grid.
 
 | Surface | What it is |
 |---|---|
 | MAJOR / MINOR / DORIAN 4THS | scale-locked: every key is in the scale |
-| PENTA 4THS | minor pentatonic, two steps per row |
+| PENTA 4THS | minor pentatonic, rows a fourth apart |
 | CHROMA 4THS | chromatic, rows a fourth apart, like a bass |
-| PIANO | the tracker layout: `z s x d c v…` lower octave, `q 2 w 3 e…` upper |
-| 49 SUPERPYTH | a major scale built from 49-EDO's sharp fifth: wide whole tones, 49-cent half steps, a major third near 9/7 |
-| 49 7x7 | 7 equal steps per octave across a row; each row up is one 49th of an octave sharper |
-| 49 CHROMA | every 49-EDO step in order, one octave across the keyboard |
+| PIANO | the tracker layout: `z s x d c v…` lower octave, `q 2 w 3 e…` upper. While a strip is on, the number row's sharps become strip keys |
+| 49 SUPERPYTH | a major scale from 49-EDO's sharp fifth: wide whole tones, 49-cent half steps, a major third near 9/7 |
+| 49 7x7 | 7 equal steps per octave across a row; each row up is one 49th of an octave sharper, so shapes across rows shimmer |
+| 49 CHROMA | every 49-EDO step in order, about one octave across the keyboard |
 
 ### Strips (`del`)
 
-In CHORD, RATCHET or ARP the top row's 12 keys stop playing notes and become
-hold keys. Hold one, then play:
+In CHORD, RATCHET or ARP the number row's 12 keys stop playing notes and
+become hold keys (their labels are on screen). Hold one, then play:
 
-- **CHORD:** the key plays that chord. On scale surfaces chords are built from
-  scale degrees, so they stay in key. On chromatic surfaces they're the usual
-  shapes snapped to the tuning; in 49-EDO each comes out bent its own way.
-- **RATCHET:** held notes re-strike at that rate, from ¼ down to 1/64, with
-  dotted and triplet values, synced to the tempo.
-- **ARP:** held and sustained notes arpeggiate.
-  - Slots 1–6 (up, down, up-down, as played, random, motif) step in 16ths.
-  - Slots 7–12 are the same patterns as **chip arps**: one voice re-pitched at
+- **CHORD:** each key plays that chord. On scale surfaces chords are stacked
+  from scale degrees, so they stay in key: 5, TRI, S2, S4, 6, 7, 9, AD9, 4TH,
+  OPN, OCT, CLS. On chromatic surfaces they're the usual shapes snapped to the
+  tuning: 5, M, m, S2, S4, M7, m7, 7, m9, M9, 69, and 7:4, a natural-seventh
+  chord. In 49-EDO each comes out bent its own way.
+- **RATCHET:** held notes re-strike at that rate, synced to the tempo: 4, 8.,
+  4t, 8, 16., 8t, 16, 32., 16t, 32, 32t, 64.
+- **ARP:** held and sustained notes arpeggiate one at a time.
+  - Keys 1–6 (UP, DN, UD, ORD as played, RND, MTF) step in 16ths at the tempo.
+  - Keys 7–12 are the same patterns as **chip arps**: one voice re-pitched at
     50 Hz, the way Follin's drivers stepped once per frame.
   - MOTIF takes both its rhythm and its notes from Lenticular's three-distance
     gap statistics.
 
-**Double-tap** a strip key to latch it. Tap it again to let go. A latched slot
-shows green.
+**Double-tap** a strip key to latch it, and tap it again to let go. A held key
+shows cyan; a latched one shows green.
+
+### Sustain (`space`)
+
+Notes you let go of while `space` is down keep sounding until you release
+`space`. Playing a sustained key again re-strikes it. Sustained notes stay in
+the ARP's pool.
 
 ### Tilt (`ctrl`)
 
@@ -60,64 +74,91 @@ While tilt is on, the device's angle sets two controls directly:
 
 Their bars turn green. Switching tilt off returns them to their set values.
 
-### FN layer
+### Dice (`` ` ``)
+
+- **Tap:** mutate. Each control has even odds of a small nudge, and at least
+  one always moves.
+- **Hold ½ s:** roll a fresh sound. HARMONICS leans low and TIMBRE stays clear
+  of the sparse bottom.
+- **FN+`del`:** undo the last dice; press it again to redo.
+
+### FN layer (hold `fn`)
 
 | FN + | |
 |---|---|
 | `z`/`x` `c`/`v` `b`/`n` `m`/`,` | HARMONICS, TIMBRE, MORPH, MACRO down/up. Hold to sweep |
-| `[` / `]` | volume, 0 to +12 dB |
+| `[` / `]` | volume in 3 dB steps, up to +12 dB. Hold to repeat |
 | `` ` `` / `1` | octave down / up |
-| `q` / `w` | root down / up one step of the current tuning |
-| `9` / `0` | tempo |
-| `tab` | previous surface |
-| `\` | previous engine |
-| `del` | undo the last dice (again to redo) |
-| `r` (hold) | **record** from the mic into the take, up to 3.3 s |
+| `q` / `w` | root down / up one step of the current tuning (a semitone, or 1/49 octave on 49 surfaces) |
+| `9` / `0` | tempo, 40–300 bpm |
+| `tab` / `\` | previous surface / previous engine |
+| `del` | undo / redo the last dice |
+| `r` (hold) | **record** from the mic into the take |
 | `l` | **looper**: record → play → overdub → play… |
-| `k` | looper stop, then clear |
+| `k` | looper stop; press again to clear |
 | `2`…`8` | load patch 2…8 from the SD card |
 | `shift` + `2`…`8` | save patch 2…8 |
 
 ## Engines (`\`)
 
-| Engine | HARMONICS | TIMBRE | MORPH | MACRO |
+| Engine | HARMONICS | TIMBRE | MORPH | MACRO (CCW / CW) |
 |---|---|---|---|---|
-| **ZX PULSE**: Tim Follin-style pin trains | chord (Plaits' set) | pin width, which is also the level | builds the stack (lower half) / arp, its rate continuous (upper half) | exaggerated pitch pull (CCW) / echo (CW) |
-| **ZX PHASE**: Phaser1-style 1-bit interference | mix method (XOR / OR / AND), plus a 1-bit flanger within each zone | PWM sweep on osc 2 | unison beating → interval ladder → LFSR noise | kick-slide drum (CCW) / ghost carrier (CW) |
-| **BROCOT FM**: parallel true FM on Stern-Brocot ratios | trunk: harmonic → Avatar → Golden convergents | FM index (key-scaled) | DX feedback ← sine → Fritz double pulse | strike (CW) / swell (CCW) |
-| **SAMPLE**: the take as a varispeed record | slice / start | length | forward, loop, ping-pong, reverse | tape-dull (CCW) / SP grit (CW) |
-| **CLOUD**: the take as a granular cloud | position | grain size | timing: CHIP, SILK, MOTIF, LOOSE, CLUMP | density |
-| **BREAK**: the take as a one-bar break, cut up live by Audiothurgist's chop grammar at the tempo | chop: verbatim → DJ edit → chops → rolls → micro bursts | pattern (32 seeds) | gate length | tape-dull / SP grit |
+| **ZX PULSE**: Tim Follin-style pin trains | chord (Plaits' set) | pin width, which is also the level | builds the stack (lower half), then an arp whose rate rises (upper half) | exaggerated pitch pull / echo |
+| **ZX PHASE**: Phaser1-style 1-bit interference | mix method (XOR / OR / AND), with a 1-bit flanger inside each zone | PWM sweep on the second oscillator | unison beating → interval ladder → noise | kick-slide drum / ghost carrier |
+| **BROCOT FM**: parallel true FM on Stern-Brocot ratios | ratio family: harmonic → Avatar → Golden convergents (sweep it for the zipper) | FM index, tamed on high notes | DX feedback ← sine (middle) → Fritz double pulse | brass swell / bell strike |
+| **MODAL**: struck resonators | the object: string, stiff string, marimba, glockenspiel, kalimba / Rhodes tine, drum, bell, gong | the mallet, felt → metal (shapes the next strike) | decay, 50 ms → 20 s | metallic noise wash / Rhodes pickup bark |
+| **SAMPLE**: the take as a varispeed record | slice (or start point) | length, 20 ms → the rest of the take | forward, loop, ping-pong, reverse | tape-dull / SP grit |
+| **CLOUD**: the take as a granular cloud | where in the take | grain size, 15 → 400 ms | timing: CHIP, SILK, MOTIF, LOOSE, CLUMP | density, 2 → 120 grains/s |
+| **BREAK**: the take as a one-bar break, cut up live | chop: verbatim → DJ edit → chops → rolls → micro bursts | which of 32 patterns | gate length | tape-dull / SP grit |
 
-**The take:** FN+R records from the mic at 24 kHz (SP-1200 territory). It is
-trimmed, normalized and sliced at onsets. Recording switches the engine to
-SAMPLE if you weren't on SAMPLE, CLOUD or BREAK. C4 plays the take as
-recorded. BREAK plays it at the tempo, so tempo is pitch (the turntable way),
-and the key adds its own pitch on top. Every re-strike restarts the bar, so
-RATCHET stutters the break.
+## The take (FN+`r`)
 
-## The looper
+Hold FN+`r` to record from the mic, for up to 3.3 s at 24 kHz (SP-1200
+territory). Sound stops while you record, so the speaker isn't recorded.
+- The take is trimmed, normalized and sliced at its onsets. The bottom line
+  then shows its length and slice count.
+- Recording switches to SAMPLE unless you're on SAMPLE, CLOUD or BREAK.
+- **SAMPLE and CLOUD:** C4 plays the take as recorded.
+- **BREAK:** the take is one bar on a 16th grid at the tempo. Tempo is pitch,
+  the turntable way, and the key adds its own pitch on top. Every re-strike
+  restarts the bar, so RATCHET stutters the break.
+- **CLOUD in CHIP or MOTIF:** grains take chord tones (root, fifth, octave,
+  octave + fifth) from the timing statistics.
 
-The looper records the events sent to the synth, not audio. That covers
-notes, chords, arp and ratchet output, control sweeps and engine changes.
+## The looper (FN+`l`, FN+`k`)
 
+The looper records what you send the synth, not audio: notes, chords, arp and
+ratchet output, control sweeps and engine changes.
 - The first pass snaps to whole beats at the current tempo.
 - Overdubs join at the next lap.
-- Looped notes never steal the gate of a note you're playing live.
+- Looped notes never cut off a note you're playing live.
+- The bottom line shows the state, lap length and a progress bar.
 
-## Patches
+## Patches (FN+`2`…`8`)
 
-Patches live in `/pocketdynamo/pN.txt` on the SD card as plain `key=value`
-text, so you can edit them by hand. The take goes alongside as `pN.wav`.
-- Any mono 16-bit WAV dropped there loads, resampled to 24 kHz.
-- Engines and surfaces are stored by name.
+A patch saves the engine, surface, root, octave, tempo and the four controls,
+plus the take. It doesn't save the strip, tilt or volume.
+- Patches are plain `key=value` text in `/pocketdynamo/pN.txt` on the SD card,
+  so you can edit them by hand. The take goes alongside as `pN.wav`.
+- Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, resampled to
+  24 kHz.
+
+## The screen
+
+- **Top:** the engine, the surface, then root/octave, tempo and volume.
+- **Status line:** the strip, `SUS` and `TILT` (lit when on), the take (or REC
+  with a timer) and CPU load.
+- **Middle:** the four control bars. Green means tilt is driving that bar.
+- **Strip row:** the 12 strip keys, when a strip is on.
+- **Bottom line:** messages (MUTATE, SAVED 3, TAKE 1.2s 6 SLICES…), the looper's
+  state, or a key hint.
 
 ## Serial (115200, for scripts)
 
 | Command | |
 |---|---|
-| `i` | state |
+| `i` | print state |
 | `B` | silent CPU bench of every engine with 8 voices |
 | `S` | SD card status |
 | `[` / `]` | volume |
-| `K<row><col-hex><+/->` | press or release a key |
+| `K<row><col-hex><+/->` | press or release a key (row 0–3 from the top, column 0–d from the left) |
