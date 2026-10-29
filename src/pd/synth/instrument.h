@@ -52,6 +52,9 @@ class Instrument {
       case EventType::NoteOn:    noteOn(e.a, e.b, e.value); break;
       case EventType::NoteOff:   noteOff(e.a); break;
       case EventType::Retrigger: retrigger(e.a, e.value); break;
+      case EventType::Pitch:
+        for (auto& v : voices_) if (v.gated && v.tag == e.a) v.note = e.value;
+        break;
       case EventType::Param:
         if (e.a < (uint8_t)Param::Count) params_[e.a] = clamp(e.value, 0.0f, 1.0f);
         break;

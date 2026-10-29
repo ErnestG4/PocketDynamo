@@ -6,12 +6,14 @@
 // Keys. Columns 1..12 of all four rows play notes, laid out by the current
 // surface (ui/surface.h). The outer columns are controls:
 //   `      dice: tap mutates the four controls, hold rolls new ones
-//   TAB    next surface                    BS     strip: NOTES/CHORD/RATCHET
+//   TAB    next surface                    BS     strip: NOTES/CHORD/RATCHET/ARP
 //   FN     function layer                  \      next engine
 //   CTRL   tilt on/off                     ENTER  all notes off
 //                                          SPACE  sustain pedal
-// Strips: in CHORD or RATCHET the top row's 12 keys stop playing notes. Hold
-// one and the notes you play take its chord, or re-strike at its rate.
+// Strips: in CHORD, RATCHET or ARP the top row's 12 keys stop playing notes.
+// Hold one and the notes you play take its chord, re-strike at its rate, or
+// arpeggiate in its pattern (ui/arp.h). Double-tap a strip key to latch it;
+// tap it again to let go.
 // Tilt: while on, the device's attitude sets TIMBRE (side to side, 0 on its
 // left edge, 1 on its right) and MORPH (0 flat, 0.8 standing up, 1 tipped
 // past upright) directly (ui/tilt.h); switching off returns their set values.
@@ -25,12 +27,14 @@
 #include <M5Cardputer.h>
 #include <cstring>
 
+#include "dsp/ars.h"
 #include "dsp/rng.h"
 #include "hw/audio_io.h"
 #include "hw/keys.h"
 #include "synth/dice.h"
 #include "synth/events.h"
 #include "synth/instrument.h"
+#include "ui/arp.h"
 #include "ui/keymap.h"
 #include "ui/surface.h"
 #include "ui/tilt.h"
@@ -64,11 +68,12 @@ constexpr uint32_t kDiceHoldMs = 500;     // hold the dice key this long to roll
 constexpr uint32_t kDrawMs = 33;          // redraw at most ~30 Hz
 constexpr uint8_t  kVelocity = 100;
 
-enum class Strip : uint8_t { Notes, Chord, Ratchet, Count };
+enum class Strip : uint8_t { Notes, Chord, Ratchet, Arp, Count };
 const char* stripName(Strip s) {
   switch (s) {
     case Strip::Chord: return "CHORD";
     case Strip::Ratchet: return "RATCHET";
+    case Strip::Arp: return "ARP";
     default: return "NOTES";
   }
 }
@@ -76,6 +81,8 @@ const char* stripName(Strip s) {
 constexpr int kRows = 4, kCols = 14, kKeys = kRows * kCols;
 constexpr int keyIndex(int r, int c) { return r * kCols + c; }
 constexpr uint8_t keyTag(int k) { return (uint8_t)(k + 1); }   // 0 = no tag
+constexpr uint8_t kArpTag = kKeys + 4;                           // the arp's one voice
+constexpr uint32_t kLatchTapMs = 300;                            // double-tap window
 
 struct Ui {
   int   octave = 3;          // the surface root sits at MIDI 12 * (octave + 1) + root
@@ -90,8 +97,18 @@ struct Ui {
   int   engine = 0;
   int   surface = 0;
   Strip strip = Strip::Notes;
-  int   slot = -1;           // strip key held, 0..11, or -1
-  int   slotKey = -1;        // which key that is
+  int   slot = -1;           // strip slot in effect (held or latched), 0..11, or -1
+  int   slotKey = -1;        // the key holding it, or -1
+  bool  latched = false;     // slot stays on after its key is let go
+  int   lastSlot = -1;       // for double-tap latching
+  uint32_t lastSlotMs = 0;
+  float pitch[kKeys] = {};       // the note each key plays (its chord root)
+  uint32_t pressSeq[kKeys] = {}; // press order, for the arp's ORDER pattern
+  uint32_t seq = 0;
+  pd::arp::Arp arp;
+  pd::ArsGapGenerator arpGaps;
+  uint32_t arpNext = 0;      // micros of the next arp step
+  bool  arpOn = false;       // the arp voice is gated
   float bpm = 120.0f;
   bool  fn = false, sustain = false, tilt = false;
   bool  sounding[kKeys] = {};    // key has voices gated under its tag
@@ -244,22 +261,99 @@ void endRatchet() {
     if (g_ui.physical[k] && g_ui.sounding[k]) send(pd::EventType::Retrigger, keyTag(k), 0, 0.0f);
 }
 
-void releaseSlot() {
+// --- arp: while on, held and sustained keys are its pool, not voices ---
+
+bool arping() { return g_ui.strip == Strip::Arp && g_ui.slot >= 0; }
+
+void startArp() {
+  for (int k = 0; k < kKeys; ++k)
+    if (g_ui.sounding[k]) send(pd::EventType::NoteOff, keyTag(k));   // they become the pool
+  g_ui.arp.restart();
+  g_ui.arpGaps.Replay();
+  g_ui.arpNext = micros();
+  g_ui.arpOn = false;
+}
+
+void serviceArp() {
+  if (!arping()) return;
+  const uint32_t now = micros();
+  if ((int32_t)(now - g_ui.arpNext) < 0) return;
+  const auto& slot = pd::arp::kSlots[g_ui.slot];
+  const float period = slot.chip ? 1e6f / pd::arp::kChipHz : 60e6f / g_ui.bpm * pd::arp::kStepBeats;
+  float gap = period, motifU = 0.0f;
+  if (slot.pattern == pd::arp::Pattern::Motif) {
+    gap = g_ui.arpGaps.NextGap(2, 1.0f, period);   // golden-ratio three-distance rhythm
+    motifU = g_ui.arpGaps.last_voice_u();
+  }
+  // Fell a whole step behind (a redraw, a bench): restart the grid.
+  g_ui.arpNext = (int32_t)(now - g_ui.arpNext) > (int32_t)period ? now + (uint32_t)gap : g_ui.arpNext + (uint32_t)gap;
+
+  float pitches[kKeys];
+  int keys[kKeys], n = 0;
+  for (int k = 0; k < kKeys; ++k)   // pool in press order
+    if (g_ui.sounding[k]) {
+      int j = n++;
+      while (j > 0 && g_ui.pressSeq[keys[j - 1]] > g_ui.pressSeq[k]) { keys[j] = keys[j - 1]; --j; }
+      keys[j] = k;
+    }
+  for (int i = 0; i < n; ++i) pitches[i] = g_ui.pitch[keys[i]];
+  if (n == 0) {
+    if (g_ui.arpOn) { send(pd::EventType::NoteOff, kArpTag); g_ui.arpOn = false; }
+    return;
+  }
+  g_ui.seed = pd::rng::hash32(g_ui.seed + 1);
+  const int pick = g_ui.arp.next(slot.pattern, pitches, n, g_ui.seed, motifU);
+  const float pitch = pitches[pick];
+  if (slot.chip && g_ui.arpOn) {
+    send(pd::EventType::Pitch, kArpTag, 0, pitch);   // one voice, re-pitched: the chip arp
+  } else {
+    if (g_ui.arpOn) send(pd::EventType::NoteOff, kArpTag);
+    send(pd::EventType::NoteOn, kArpTag, kVelocity, pitch);
+    g_ui.arpOn = true;
+  }
+}
+
+// The pool goes back to being notes.
+void endArp() {
+  if (!arping()) return;
+  if (g_ui.arpOn) send(pd::EventType::NoteOff, kArpTag);
+  g_ui.arpOn = false;
+  for (int k = 0; k < kKeys; ++k)
+    if (g_ui.sounding[k]) send(pd::EventType::NoteOn, keyTag(k), kVelocity, g_ui.pitch[k]);
+}
+
+void endSlot() {
   endRatchet();
+  endArp();
   g_ui.slot = -1;
   g_ui.slotKey = -1;
+  g_ui.latched = false;
   g_ui.dirty = true;
 }
 
+void releaseSlot() {
+  g_ui.slotKey = -1;
+  if (!g_ui.latched) endSlot();
+}
+
 void pressSlot(int k, int slot) {
-  endRatchet();
-  g_ui.slot = slot;
-  g_ui.slotKey = k;
-  if (ratcheting()) {
-    const uint32_t now = micros();
-    for (int j = 0; j < kKeys; ++j)
-      if (g_ui.physical[j] && g_ui.sounding[j]) strike(j, now);
+  const uint32_t now = millis();
+  if (g_ui.latched && slot == g_ui.slot) { endSlot(); return; }   // tap a latched slot: off
+  const bool doubleTap = slot == g_ui.lastSlot && now - g_ui.lastSlotMs < kLatchTapMs;
+  g_ui.lastSlot = slot;
+  g_ui.lastSlotMs = now;
+  if (slot != g_ui.slot) {
+    endSlot();
+    g_ui.slot = slot;
+    if (ratcheting()) {
+      const uint32_t t = micros();
+      for (int j = 0; j < kKeys; ++j)
+        if (g_ui.physical[j] && g_ui.sounding[j]) strike(j, t);
+    }
+    if (arping()) startArp();
   }
+  g_ui.slotKey = k;
+  g_ui.latched = doubleTap;
   g_ui.dirty = true;
 }
 
@@ -270,10 +364,13 @@ void playKey(int k, int degree) {
   int n = 1;
   if (g_ui.strip == Strip::Chord && g_ui.slot >= 0) n = pd::surface::chordDegrees(surf(), g_ui.slot, offs);
   const float base = 12.0f * (g_ui.octave + 1) + g_ui.root;
-  for (int i = 0; i < n; ++i) {
-    const float pitch = base + pd::surface::degreeSemitones(surf(), degree + offs[i]);
-    send(pd::EventType::NoteOn, tag, kVelocity, pd::clamp(pitch, 0.0f, 127.0f));
-  }
+  g_ui.pitch[k] = pd::clamp(base + pd::surface::degreeSemitones(surf(), degree), 0.0f, 127.0f);
+  g_ui.pressSeq[k] = ++g_ui.seq;
+  if (!arping())   // under the arp a key joins the pool instead of sounding
+    for (int i = 0; i < n; ++i) {
+      const float pitch = base + pd::surface::degreeSemitones(surf(), degree + offs[i]);
+      send(pd::EventType::NoteOn, tag, kVelocity, pd::clamp(pitch, 0.0f, 127.0f));
+    }
   g_ui.sounding[k] = true;
   g_ui.sustained[k] = false;
   g_ui.physical[k] = true;
@@ -301,6 +398,7 @@ void setSustain(bool down) {
 
 void allOff() {
   send(pd::EventType::AllOff, 0);
+  g_ui.arpOn = false;
   for (int k = 0; k < kKeys; ++k) g_ui.sounding[k] = g_ui.sustained[k] = false;
 }
 
@@ -429,7 +527,7 @@ void onKey(int r, int c, bool pressed) {
   if (c == 13) {
     switch (r) {
       case 0:   // BS: next strip
-        releaseSlot();
+        endSlot();
         g_ui.strip = (Strip)(((int)g_ui.strip + 1) % (int)Strip::Count);
         g_ui.dirty = true;
         return;
@@ -519,12 +617,13 @@ void draw(const pd::audio::Stats& s) {
   if (g_ui.strip != Strip::Notes) {
     for (int i = 0; i < 12; ++i) {
       const char* label = g_ui.strip == Strip::Chord ? pd::surface::chord(surf(), i).label
-                                                     : pd::surface::kRatchets[i].label;
+                        : g_ui.strip == Strip::Ratchet ? pd::surface::kRatchets[i].label
+                                                       : pd::arp::kSlots[i].label;
       const int x = 6 + 19 * i;
       const bool held = i == g_ui.slot;
-      d.fillRect(x, 102, 18, 14, held ? TFT_CYAN : TFT_BLACK);
+      d.fillRect(x, 102, 18, 14, held ? (g_ui.latched ? TFT_GREEN : TFT_CYAN) : TFT_BLACK);
       d.drawRect(x, 102, 18, 14, TFT_DARKGREY);
-      d.setTextColor(held ? TFT_BLACK : TFT_CYAN, held ? TFT_CYAN : TFT_BLACK);
+      d.setTextColor(held ? TFT_BLACK : TFT_CYAN, held ? (g_ui.latched ? TFT_GREEN : TFT_CYAN) : TFT_BLACK);
       d.setCursor(x + 9 - 3 * (int)strlen(label), 106);
       d.print(label);
     }
@@ -600,6 +699,7 @@ void controlTask(void*) {
     serviceRepeat(now);
     serviceDice(now);
     serviceRatchet();
+    serviceArp();
     serviceRecording();
     if (now - lastTilt >= 10) { lastTilt = now; serviceTilt(); }
     while (Serial.available()) {
@@ -644,6 +744,7 @@ void setup() {
                 keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", canvasOk ? "ok" : "FAIL",
                 (unsigned long)ESP.getFreeHeap());
   g_ui.seed = pd::rng::hash32(micros());
+  g_ui.arpGaps.Init(g_ui.seed | 1u);
   pushParams();
   xTaskCreatePinnedToCore(controlTask, "pd_ctrl", 8192, nullptr, 2, nullptr, 0);
 }
