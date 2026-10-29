@@ -5,7 +5,8 @@
 //
 // Keys: two tracker-style piano octaves (ui/keymap.h). TAB next engine,
 // ENTER all notes off. Hold FN: z/x harmonics, c/v timbre, b/n morph,
-// m/, macro (down/up), [/] codec volume, ` / 1 octave down/up.
+// m/, macro (down/up), [/] codec volume (0..+12 dB), ` / 1 octave down/up.
+// Holding a param or volume combo auto-repeats.
 // Serial: [ / ] codec volume, i = print state, B = silent CPU bench of a
 // six-voice chord per engine (core 0, separate instrument, nothing audible).
 #include <Arduino.h>
@@ -34,15 +35,26 @@ void render(const float* in, float* out, size_t n) {
 
 // --- control side (core 0) ---------------------------------------------------
 
+// Codec DAC volume register: 0xBF = 0 dB, 0.5 dB per count. Past +12 dB the
+// speaker path distorts, so that is the ceiling.
+constexpr int kDacDefault = 0xBF + 12;   // +6 dB
+constexpr int kDacMax     = 0xBF + 24;   // +12 dB
+
+// Held FN combos auto-repeat: first repeat after kRepeatDelayMs, then every
+// interval for that action.
+constexpr uint32_t kRepeatDelayMs = 300;
+
 struct Ui {
   int   octave = 4;          // lower C = MIDI 12 * (octave + 1): C4 = 60
-  int   dacVol = 0xBF;       // 0 dB
+  int   dacVol = kDacDefault;
   float params[(int)pd::Param::Count] = {0.0f, 0.75f, 0.0f, 0.5f};
   int   engine = 0;
   bool  fn = false;
   uint8_t held[4][14] = {};  // note sounding per key (0 = none), so octave
                              // changes never strand a note
   bool  dirty = true;
+  // The FN combo being held, if it repeats (label 0 = none).
+  struct { char label = 0; uint8_t row, col; uint32_t next, interval; } repeat;
 };
 Ui g_ui;
 
@@ -58,39 +70,64 @@ void nudgeParam(pd::Param p, float d) {
 }
 
 void setDac(int reg) {
-  g_ui.dacVol = pd::clamp(reg, 0, 0xFF);
+  g_ui.dacVol = pd::clamp(reg, 0, kDacMax);
   pd::audio::setDacVolume((uint8_t)g_ui.dacVol);
   g_ui.dirty = true;
+}
+
+// One step of an FN combo. Returns the auto-repeat interval in ms, or 0 for
+// actions that fire once per press.
+uint32_t fnAction(char label) {
+  constexpr float kStep = 1.0f / 32.0f;
+  switch (label) {
+    case 'z': nudgeParam(pd::Param::Harmonics, -kStep); return 30;
+    case 'x': nudgeParam(pd::Param::Harmonics, +kStep); return 30;
+    case 'c': nudgeParam(pd::Param::Timbre, -kStep); return 30;
+    case 'v': nudgeParam(pd::Param::Timbre, +kStep); return 30;
+    case 'b': nudgeParam(pd::Param::Morph, -kStep); return 30;
+    case 'n': nudgeParam(pd::Param::Morph, +kStep); return 30;
+    case 'm': nudgeParam(pd::Param::Macro, -kStep); return 30;
+    case ',': nudgeParam(pd::Param::Macro, +kStep); return 30;
+    case '[': setDac(g_ui.dacVol - 6); return 150;
+    case ']': setDac(g_ui.dacVol + 6); return 150;
+    case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 8); g_ui.dirty = true; return 0;
+    case '1': g_ui.octave = pd::clamp(g_ui.octave + 1, 0, 8); g_ui.dirty = true; return 0;
+    default: return 0;
+  }
+}
+
+void serviceRepeat(uint32_t now) {
+  auto& rp = g_ui.repeat;
+  if (!rp.label || (int32_t)(now - rp.next) < 0) return;
+  fnAction(rp.label);
+  rp.next = now + rp.interval;
 }
 
 void onKey(const pd::keys::KeyEvent& k) {
   const int r = k.row, c = k.col;
   if (r > 3 || c > 13) return;
-  if (pd::keymap::isFn(r, c)) { g_ui.fn = k.pressed; return; }
+  if (pd::keymap::isFn(r, c)) {
+    g_ui.fn = k.pressed;
+    if (!k.pressed) g_ui.repeat.label = 0;
+    return;
+  }
 
   // Releases always end whatever that key started.
   if (!k.pressed) {
     if (g_ui.held[r][c]) { send(pd::EventType::NoteOff, g_ui.held[r][c]); g_ui.held[r][c] = 0; }
+    if (g_ui.repeat.label && g_ui.repeat.row == r && g_ui.repeat.col == c) g_ui.repeat.label = 0;
     return;
   }
 
   if (g_ui.fn) {
-    constexpr float kStep = 1.0f / 32.0f;
-    switch (pd::keymap::kLabel[r][c]) {
-      case 'z': nudgeParam(pd::Param::Harmonics, -kStep); return;
-      case 'x': nudgeParam(pd::Param::Harmonics, +kStep); return;
-      case 'c': nudgeParam(pd::Param::Timbre, -kStep); return;
-      case 'v': nudgeParam(pd::Param::Timbre, +kStep); return;
-      case 'b': nudgeParam(pd::Param::Morph, -kStep); return;
-      case 'n': nudgeParam(pd::Param::Morph, +kStep); return;
-      case 'm': nudgeParam(pd::Param::Macro, -kStep); return;
-      case ',': nudgeParam(pd::Param::Macro, +kStep); return;
-      case '[': setDac(g_ui.dacVol - 6); return;
-      case ']': setDac(g_ui.dacVol + 6); return;
-      case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 8); g_ui.dirty = true; return;
-      case '1': g_ui.octave = pd::clamp(g_ui.octave + 1, 0, 8); g_ui.dirty = true; return;
-      default: return;
-    }
+    const char label = pd::keymap::kLabel[r][c];
+    const uint32_t interval = fnAction(label);
+    auto& rp = g_ui.repeat;
+    rp.label = interval ? label : 0;
+    rp.row = (uint8_t)r; rp.col = (uint8_t)c;
+    rp.next = millis() + kRepeatDelayMs;
+    rp.interval = interval;
+    return;
   }
 
   if (pd::keymap::isTab(r, c)) {
@@ -172,6 +209,7 @@ void controlTask(void*) {
   for (;;) {
     const int n = pd::keys::poll(ev, 10);
     for (int i = 0; i < n; ++i) onKey(ev[i]);
+    serviceRepeat(millis());
     while (Serial.available()) {
       const int c = Serial.read();
       if (c == '[') setDac(g_ui.dacVol - 6);
@@ -208,6 +246,7 @@ void setup() {
   M5Cardputer.Display.fillScreen(TFT_BLACK);
   const bool keysOk = pd::keys::begin();
   const bool audioOk = pd::audio::begin(render);
+  if (audioOk) setDac(kDacDefault);
   Serial.printf("pd begin: audio=%s keys=%s\n", audioOk ? "ok" : "FAIL", keysOk ? "ok" : "FAIL");
   for (int p = 0; p < (int)pd::Param::Count; ++p)
     send(pd::EventType::Param, (uint8_t)p, 0, g_ui.params[p]);
