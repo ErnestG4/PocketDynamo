@@ -1,30 +1,44 @@
 // PocketDynamo — playable: keyboard -> event queue -> instrument -> codec.
 // Core 1: pd_audio render task (hw/audio_io), drains the event queue each
-// block. Core 0: control task — keyboard, display, serial. The Arduino loop
-// task is deleted so nothing else competes on core 1.
+// block. Core 0: control task — keyboard, tilt, display, serial. The Arduino
+// loop task is deleted so nothing else competes on core 1.
 //
-// Keys: two tracker-style piano octaves (ui/keymap.h). TAB next engine,
-// ENTER all notes off. Hold FN: z/x harmonics, c/v timbre, b/n morph,
-// m/, macro (down/up), [/] codec volume (0..+12 dB), ` / 1 octave down/up.
-// Holding a param or volume combo auto-repeats.
-// Serial: [ / ] codec volume, i = print state, B = silent CPU bench of a
-// six-voice chord per engine (core 0, separate instrument, nothing audible).
+// Keys. Columns 1..12 of all four rows play notes, laid out by the current
+// surface (ui/surface.h). The outer columns are controls:
+//   `      dice: tap mutates the four controls, hold rolls new ones
+//   TAB    next surface                    BS     strip: NOTES/CHORD/RATCHET
+//   FN     function layer                  \      next engine
+//   CTRL   tilt on/off                     ENTER  all notes off
+//                                          SPACE  sustain pedal
+// Strips: in CHORD or RATCHET the top row's 12 keys stop playing notes. Hold
+// one and the notes you play take its chord, or re-strike at its rate.
+// Tilt: switching it on takes the current angle as level; tilting from there
+// bends TIMBRE and MORPH around their set values.
+// FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
+// q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
+// BS undo the last dice. Holding a param, volume, root or tempo combo repeats.
+// Serial: [ / ] volume, i = print state, B = silent CPU bench, K<row><col
+// hex><+|-> = press/release a key (for scripted tests).
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include <cstring>
 
+#include "dsp/rng.h"
 #include "hw/audio_io.h"
 #include "hw/keys.h"
+#include "synth/dice.h"
 #include "synth/events.h"
 #include "synth/instrument.h"
 #include "ui/keymap.h"
+#include "ui/surface.h"
 
 namespace {
 
-constexpr int kVoices = 6;
+constexpr int kVoices = 8;
 using Synth = pd::Instrument<kVoices, pd::audio::kBlock>;
 
 Synth g_synth;
-pd::SpscQueue<64> g_events;
+pd::SpscQueue<128> g_events;
 
 void render(const float* in, float* out, size_t n) {
   (void)in; (void)n;
@@ -43,29 +57,82 @@ constexpr int kDacMax     = 0xBF + 24;   // +12 dB
 // Held FN combos auto-repeat: first repeat after kRepeatDelayMs, then every
 // interval for that action.
 constexpr uint32_t kRepeatDelayMs = 300;
+constexpr uint32_t kDiceHoldMs = 500;     // hold the dice key this long to roll
+constexpr uint32_t kDrawMs = 33;          // redraw at most ~30 Hz
+constexpr uint8_t  kVelocity = 100;
+// Tilt: this much change in one gravity axis (in g, ~45 degrees) moves its
+// control by kTiltRange.
+constexpr float kTiltFullG = 0.7f, kTiltRange = 0.5f;
+
+enum class Strip : uint8_t { Notes, Chord, Ratchet, Count };
+const char* stripName(Strip s) {
+  switch (s) {
+    case Strip::Chord: return "CHORD";
+    case Strip::Ratchet: return "RATCHET";
+    default: return "NOTES";
+  }
+}
+
+constexpr int kRows = 4, kCols = 14, kKeys = kRows * kCols;
+constexpr int keyIndex(int r, int c) { return r * kCols + c; }
+constexpr uint8_t keyTag(int k) { return (uint8_t)(k + 1); }   // 0 = no tag
 
 struct Ui {
-  int   octave = 4;          // lower C = MIDI 12 * (octave + 1): C4 = 60
+  int   octave = 3;          // the surface root sits at MIDI 12 * (octave + 1) + root
+  float root = 0.0f;         // semitones above C, 0..12, fractional off 12-EDO
   int   dacVol = kDacDefault;
-  float params[(int)pd::Param::Count] = {0.0f, 0.75f, 0.0f, 0.5f};
+  float params[(int)pd::Param::Count] = {0.0f, 0.75f, 0.0f, 0.5f};   // as set
+  float tiltOff[(int)pd::Param::Count] = {};
+  float sent[(int)pd::Param::Count] = {-1.0f, -1.0f, -1.0f, -1.0f};  // last sent
+  float undo[(int)pd::Param::Count] = {};
+  bool  canUndo = false;
+  uint32_t seed = 0;
   int   engine = 0;
-  bool  fn = false;
-  uint8_t held[4][14] = {};  // note sounding per key (0 = none), so octave
-                             // changes never strand a note
-  bool  dirty = true;
-  // The FN combo being held, if it repeats (label 0 = none).
+  int   surface = 0;
+  Strip strip = Strip::Notes;
+  int   slot = -1;           // strip key held, 0..11, or -1
+  int   slotKey = -1;        // which key that is
+  float bpm = 120.0f;
+  bool  fn = false, sustain = false, tilt = false;
+  float tiltRef[3] = {};
+  bool  sounding[kKeys] = {};    // key has voices gated under its tag
+  bool  sustained[kKeys] = {};   // ...only because the pedal is down
+  bool  physical[kKeys] = {};    // key is physically down (and played a note)
+  uint32_t ratchetNext[kKeys] = {};   // micros of the next strike
+  uint32_t diceDown = 0;
+  bool  diceHeld = false, diceDone = false;
   struct { char label = 0; uint8_t row, col; uint32_t next, interval; } repeat;
+  const char* msg = nullptr;
+  uint32_t msgUntil = 0;
+  bool  dirty = true;
 };
 Ui g_ui;
+
+const pd::surface::Surface& surf() { return pd::surface::kSurfaces[g_ui.surface]; }
 
 void send(pd::EventType t, uint8_t a, uint8_t b = 0, float v = 0.0f) {
   g_events.push(pd::Event{t, a, b, v});
 }
 
+void flash(const char* m) { g_ui.msg = m; g_ui.msgUntil = millis() + 1500; g_ui.dirty = true; }
+
+float effective(int p) { return pd::clamp(g_ui.params[p] + g_ui.tiltOff[p], 0.0f, 1.0f); }
+
+// Send the controls (set value + tilt) that have moved since last sent.
+void pushParams() {
+  for (int p = 0; p < (int)pd::Param::Count; ++p) {
+    const float v = effective(p);
+    if (std::fabs(v - g_ui.sent[p]) < 1.0f / 512.0f) continue;
+    send(pd::EventType::Param, (uint8_t)p, 0, v);
+    g_ui.sent[p] = v;
+    g_ui.dirty = true;
+  }
+}
+
 void nudgeParam(pd::Param p, float d) {
   float& v = g_ui.params[(int)p];
   v = pd::clamp(v + d, 0.0f, 1.0f);
-  send(pd::EventType::Param, (uint8_t)p, 0, v);
+  pushParams();
   g_ui.dirty = true;
 }
 
@@ -74,6 +141,170 @@ void setDac(int reg) {
   pd::audio::setDacVolume((uint8_t)g_ui.dacVol);
   g_ui.dirty = true;
 }
+
+// Root moves by one step of the current tuning; whole octaves carry into
+// the octave so the display stays readable.
+void nudgeRoot(int dir) {
+  g_ui.root += dir * 12.0f / surf().divisions;
+  if (g_ui.root >= 12.0f - 1e-3f) { g_ui.root -= 12.0f; g_ui.octave = pd::clamp(g_ui.octave + 1, 0, 7); }
+  if (g_ui.root < -1e-3f)         { g_ui.root += 12.0f; g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 7); }
+  if (std::fabs(g_ui.root) < 1e-3f) g_ui.root = 0.0f;
+  g_ui.dirty = true;
+}
+
+// --- dice ---
+
+void doDice(bool fullRoll) {
+  memcpy(g_ui.undo, g_ui.params, sizeof g_ui.params);
+  g_ui.canUndo = true;
+  g_ui.seed = pd::rng::hash32(g_ui.seed ^ micros());
+  if (fullRoll) pd::dice::roll(g_ui.params, g_ui.seed);
+  else pd::dice::mutate(g_ui.params, g_ui.seed);
+  pushParams();
+  flash(fullRoll ? "ROLL" : "MUTATE");
+}
+
+void undoDice() {
+  if (!g_ui.canUndo) { flash("NOTHING TO UNDO"); return; }
+  float t[(int)pd::Param::Count];
+  memcpy(t, g_ui.params, sizeof t);              // swap, so undo twice = redo
+  memcpy(g_ui.params, g_ui.undo, sizeof t);
+  memcpy(g_ui.undo, t, sizeof t);
+  pushParams();
+  flash("UNDO");
+}
+
+// --- tilt ---
+
+void readAccel(float* a) {
+  M5.Imu.update();
+  M5.Imu.getAccel(&a[0], &a[1], &a[2]);
+}
+
+void toggleTilt() {
+  if (g_ui.tilt) {
+    g_ui.tilt = false;
+    for (float& o : g_ui.tiltOff) o = 0.0f;
+    pushParams();
+    flash("TILT OFF");
+    return;
+  }
+  if (!M5.Imu.isEnabled()) { flash("NO IMU"); return; }
+  readAccel(g_ui.tiltRef);
+  g_ui.tilt = true;
+  Serial.printf("tilt level: accel %+.2f %+.2f %+.2f g\n", g_ui.tiltRef[0], g_ui.tiltRef[1], g_ui.tiltRef[2]);
+  flash("TILT ON");
+}
+
+void serviceTilt() {
+  if (!g_ui.tilt) return;
+  float a[3];
+  readAccel(a);
+  const float target[2] = {
+    pd::clamp((a[0] - g_ui.tiltRef[0]) / kTiltFullG, -1.0f, 1.0f) * kTiltRange,
+    pd::clamp((a[1] - g_ui.tiltRef[1]) / kTiltFullG, -1.0f, 1.0f) * kTiltRange,
+  };
+  float& t = g_ui.tiltOff[(int)pd::Param::Timbre];
+  float& m = g_ui.tiltOff[(int)pd::Param::Morph];
+  t += 0.3f * (target[0] - t);
+  m += 0.3f * (target[1] - m);
+  pushParams();
+}
+
+// --- notes, strips, sustain ---
+
+float ratchetPeriodUs() {
+  return 60.0e6f / g_ui.bpm * pd::surface::kRatchets[g_ui.slot].beats;
+}
+
+void strike(int k, uint32_t now) {
+  const float period = ratchetPeriodUs();
+  send(pd::EventType::Retrigger, keyTag(k), 0, 0.8f * period * 1e-3f);
+  g_ui.ratchetNext[k] = now + (uint32_t)period;
+}
+
+bool ratcheting() { return g_ui.strip == Strip::Ratchet && g_ui.slot >= 0; }
+
+void serviceRatchet() {
+  if (!ratcheting()) return;
+  const uint32_t now = micros();
+  for (int k = 0; k < kKeys; ++k)
+    if (g_ui.physical[k] && g_ui.sounding[k] && (int32_t)(now - g_ui.ratchetNext[k]) >= 0) {
+      // Fell more than a period behind (a redraw, a bench): restart the grid.
+      const bool late = (int32_t)(now - g_ui.ratchetNext[k]) > (int32_t)ratchetPeriodUs();
+      const uint32_t at = late ? now : g_ui.ratchetNext[k];
+      strike(k, at);
+    }
+}
+
+// Held notes go back to sustaining as normal notes.
+void endRatchet() {
+  if (!ratcheting()) return;
+  for (int k = 0; k < kKeys; ++k)
+    if (g_ui.physical[k] && g_ui.sounding[k]) send(pd::EventType::Retrigger, keyTag(k), 0, 0.0f);
+}
+
+void releaseSlot() {
+  endRatchet();
+  g_ui.slot = -1;
+  g_ui.slotKey = -1;
+  g_ui.dirty = true;
+}
+
+void pressSlot(int k, int slot) {
+  endRatchet();
+  g_ui.slot = slot;
+  g_ui.slotKey = k;
+  if (ratcheting()) {
+    const uint32_t now = micros();
+    for (int j = 0; j < kKeys; ++j)
+      if (g_ui.physical[j] && g_ui.sounding[j]) strike(j, now);
+  }
+  g_ui.dirty = true;
+}
+
+void playKey(int k, int degree) {
+  const uint8_t tag = keyTag(k);
+  if (g_ui.sounding[k]) send(pd::EventType::NoteOff, tag);   // re-struck while sustained
+  int offs[pd::surface::kMaxChordNotes] = {0};
+  int n = 1;
+  if (g_ui.strip == Strip::Chord && g_ui.slot >= 0) n = pd::surface::chordDegrees(surf(), g_ui.slot, offs);
+  const float base = 12.0f * (g_ui.octave + 1) + g_ui.root;
+  for (int i = 0; i < n; ++i) {
+    const float pitch = base + pd::surface::degreeSemitones(surf(), degree + offs[i]);
+    send(pd::EventType::NoteOn, tag, kVelocity, pd::clamp(pitch, 0.0f, 127.0f));
+  }
+  g_ui.sounding[k] = true;
+  g_ui.sustained[k] = false;
+  g_ui.physical[k] = true;
+  if (ratcheting()) strike(k, micros());
+}
+
+void releaseKey(int k) {
+  g_ui.physical[k] = false;
+  if (!g_ui.sounding[k]) return;
+  if (g_ui.sustain) { g_ui.sustained[k] = true; return; }
+  send(pd::EventType::NoteOff, keyTag(k));
+  g_ui.sounding[k] = false;
+}
+
+void setSustain(bool down) {
+  g_ui.sustain = down;
+  g_ui.dirty = true;
+  if (down) return;
+  for (int k = 0; k < kKeys; ++k)
+    if (g_ui.sustained[k]) {
+      send(pd::EventType::NoteOff, keyTag(k));
+      g_ui.sounding[k] = g_ui.sustained[k] = false;
+    }
+}
+
+void allOff() {
+  send(pd::EventType::AllOff, 0);
+  for (int k = 0; k < kKeys; ++k) g_ui.sounding[k] = g_ui.sustained[k] = false;
+}
+
+// --- key dispatch ---
 
 // One step of an FN combo. Returns the auto-repeat interval in ms, or 0 for
 // actions that fire once per press.
@@ -90,8 +321,17 @@ uint32_t fnAction(char label) {
     case ',': nudgeParam(pd::Param::Macro, +kStep); return 30;
     case '[': setDac(g_ui.dacVol - 6); return 150;
     case ']': setDac(g_ui.dacVol + 6); return 150;
-    case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 8); g_ui.dirty = true; return 0;
-    case '1': g_ui.octave = pd::clamp(g_ui.octave + 1, 0, 8); g_ui.dirty = true; return 0;
+    case 'q': nudgeRoot(-1); return 150;
+    case 'w': nudgeRoot(+1); return 150;
+    case '9': g_ui.bpm = pd::clamp(g_ui.bpm - 2.0f, 40.0f, 300.0f); g_ui.dirty = true; return 60;
+    case '0': g_ui.bpm = pd::clamp(g_ui.bpm + 2.0f, 40.0f, 300.0f); g_ui.dirty = true; return 60;
+    case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 7); g_ui.dirty = true; return 0;
+    case '1': g_ui.octave = pd::clamp(g_ui.octave + 1, 0, 7); g_ui.dirty = true; return 0;
+    case '>':   // TAB
+      g_ui.surface = (g_ui.surface + pd::surface::kNumSurfaces - 1) % pd::surface::kNumSurfaces;
+      g_ui.dirty = true;
+      return 0;
+    case '<': undoDice(); return 0;   // BS
     default: return 0;
   }
 }
@@ -103,19 +343,32 @@ void serviceRepeat(uint32_t now) {
   rp.next = now + rp.interval;
 }
 
-void onKey(const pd::keys::KeyEvent& k) {
-  const int r = k.row, c = k.col;
-  if (r > 3 || c > 13) return;
+void serviceDice(uint32_t now) {
+  if (g_ui.diceHeld && !g_ui.diceDone && now - g_ui.diceDown >= kDiceHoldMs) {
+    doDice(true);
+    g_ui.diceDone = true;
+  }
+}
+
+void onKey(int r, int c, bool pressed) {
+  if (r >= kRows || c >= kCols) return;
+  const int k = keyIndex(r, c);
+
+  // Modifiers and releases first: they must work whatever else is held.
   if (pd::keymap::isFn(r, c)) {
-    g_ui.fn = k.pressed;
-    if (!k.pressed) g_ui.repeat.label = 0;
+    g_ui.fn = pressed;
+    if (!pressed) g_ui.repeat.label = 0;
     return;
   }
-
-  // Releases always end whatever that key started.
-  if (!k.pressed) {
-    if (g_ui.held[r][c]) { send(pd::EventType::NoteOff, g_ui.held[r][c]); g_ui.held[r][c] = 0; }
+  if (r == 3 && c == 13) { setSustain(pressed); return; }   // SPACE
+  if (!pressed) {
     if (g_ui.repeat.label && g_ui.repeat.row == r && g_ui.repeat.col == c) g_ui.repeat.label = 0;
+    if (k == g_ui.slotKey) releaseSlot();
+    if (r == 0 && c == 0 && g_ui.diceHeld) {
+      if (!g_ui.diceDone) doDice(false);
+      g_ui.diceHeld = false;
+    }
+    releaseKey(k);
     return;
   }
 
@@ -130,50 +383,122 @@ void onKey(const pd::keys::KeyEvent& k) {
     return;
   }
 
-  if (pd::keymap::isTab(r, c)) {
-    g_ui.engine = (g_ui.engine + 1) % (int)pd::EngineId::Count;
-    send(pd::EventType::Engine, (uint8_t)g_ui.engine);
-    g_ui.dirty = true;
-    return;
+  // Control columns.
+  if (c == 0) {
+    switch (r) {
+      case 0: g_ui.diceHeld = true; g_ui.diceDone = false; g_ui.diceDown = millis(); return;
+      case 1: g_ui.surface = (g_ui.surface + 1) % pd::surface::kNumSurfaces; g_ui.dirty = true; return;
+      case 3: toggleTilt(); return;
+      default: return;
+    }
   }
-  if (r == 2 && c == 13) { send(pd::EventType::AllOff, 0); return; }   // ENTER
+  if (c == 13) {
+    switch (r) {
+      case 0:   // BS: next strip
+        releaseSlot();
+        g_ui.strip = (Strip)(((int)g_ui.strip + 1) % (int)Strip::Count);
+        g_ui.dirty = true;
+        return;
+      case 1:
+        g_ui.engine = (g_ui.engine + 1) % (int)pd::EngineId::Count;
+        send(pd::EventType::Engine, (uint8_t)g_ui.engine);
+        g_ui.dirty = true;
+        return;
+      case 2: allOff(); return;   // ENTER
+      default: return;
+    }
+  }
 
-  const int semi = pd::keymap::kNote[r][c];
-  if (semi < 0) return;
-  const int note = pd::clamp(12 * (g_ui.octave + 1) + semi, 1, 127);
-  g_ui.held[r][c] = (uint8_t)note;
-  send(pd::EventType::NoteOn, (uint8_t)note, 100);
+  if (r == 0 && g_ui.strip != Strip::Notes) { pressSlot(k, c - 1); return; }
+
+  const int degree = pd::surface::keyDegree(surf(), r, c);
+  if (degree == pd::surface::kNoDegree) return;
+  playKey(k, degree);
 }
 
-void drawBar(int y, const char* name, float v) {
-  auto& d = M5Cardputer.Display;
+// --- display ---
+
+// Drawn off-screen and pushed whole: no flicker from the full redraw.
+M5Canvas g_canvas(&M5Cardputer.Display);
+
+void drawBar(int y, const char* name, int p) {
+  auto& d = g_canvas;
   d.setCursor(4, y + 2);
   d.print(name);
-  d.drawRect(64, y, 170, 12, TFT_DARKGREY);
-  d.fillRect(65, y + 1, 168, 10, TFT_BLACK);
-  d.fillRect(65, y + 1, (int)(168 * v), 10, TFT_ORANGE);
+  d.drawRect(64, y, 172, 12, TFT_DARKGREY);
+  d.fillRect(65, y + 1, 170, 10, TFT_BLACK);
+  d.fillRect(65, y + 1, (int)(170 * g_ui.params[p]), 10, TFT_ORANGE);
+  if (g_ui.tiltOff[p] != 0.0f) d.fillRect(65 + (int)(168 * effective(p)), y + 1, 2, 10, TFT_WHITE);
+}
+
+void rootLabel(char* buf, size_t n) {
+  static const char* kNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+  const int semi = (int)std::lround(g_ui.root);
+  const int cents = (int)std::lround((g_ui.root - semi) * 100.0f);
+  const char* name = kNames[((semi % 12) + 12) % 12];
+  if (cents) snprintf(buf, n, "%s%d%+dc", name, g_ui.octave, cents);
+  else snprintf(buf, n, "%s%d", name, g_ui.octave);
 }
 
 void draw(const pd::audio::Stats& s) {
-  auto& d = M5Cardputer.Display;
-  d.fillRect(0, 0, 240, 30, TFT_BLACK);
+  auto& d = g_canvas;
+  d.fillScreen(TFT_BLACK);
   d.setTextSize(2);
   d.setTextColor(TFT_ORANGE, TFT_BLACK);
-  d.setCursor(4, 4);
+  d.setCursor(4, 2);
   d.print(pd::engineName((pd::EngineId)g_ui.engine));
   d.setTextSize(1);
+  d.setTextColor(TFT_WHITE, TFT_BLACK);
+  d.setCursor(124, 2);
+  d.print(surf().name);
+  char root[16];
+  rootLabel(root, sizeof root);
   d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(150, 4);
-  d.printf("oct %d  vol %+d", g_ui.octave, (g_ui.dacVol - 0xBF) / 2);
-  d.setCursor(150, 16);
+  d.setCursor(124, 12);
+  d.printf("%s %3.0fbpm %+ddB", root, g_ui.bpm, (g_ui.dacVol - 0xBF) / 2);
+  d.setCursor(4, 24);
+  d.setTextColor(g_ui.strip == Strip::Notes ? TFT_DARKGREY : TFT_CYAN, TFT_BLACK);
+  d.print(stripName(g_ui.strip));
+  d.setTextColor(g_ui.sustain ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  d.setCursor(64, 24);
+  d.print("SUS");
+  d.setTextColor(g_ui.tilt ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  d.setCursor(88, 24);
+  d.print("TILT");
+  d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  d.setCursor(170, 24);
   d.printf("cpu %lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
-  drawBar(40, "HARMONICS", g_ui.params[0]);
-  drawBar(60, "TIMBRE", g_ui.params[1]);
-  drawBar(80, "MORPH", g_ui.params[2]);
-  drawBar(100, "MACRO", g_ui.params[3]);
-  d.setCursor(4, 122);
-  d.print("TAB eng  FN+zx cv bn m, params  FN+[] vol");
+  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  drawBar(36, "HARMONICS", 0);
+  drawBar(52, "TIMBRE", 1);
+  drawBar(68, "MORPH", 2);
+  drawBar(84, "MACRO", 3);
+
+  if (g_ui.strip != Strip::Notes) {
+    for (int i = 0; i < 12; ++i) {
+      const char* label = g_ui.strip == Strip::Chord ? pd::surface::chord(surf(), i).label
+                                                     : pd::surface::kRatchets[i].label;
+      const int x = 6 + 19 * i;
+      const bool held = i == g_ui.slot;
+      d.fillRect(x, 102, 18, 14, held ? TFT_CYAN : TFT_BLACK);
+      d.drawRect(x, 102, 18, 14, TFT_DARKGREY);
+      d.setTextColor(held ? TFT_BLACK : TFT_CYAN, held ? TFT_CYAN : TFT_BLACK);
+      d.setCursor(x + 9 - 3 * (int)strlen(label), 106);
+      d.print(label);
+    }
+  }
+  d.setCursor(4, 124);
+  if (g_ui.msg && (int32_t)(millis() - g_ui.msgUntil) < 0) {
+    d.setTextColor(TFT_YELLOW, TFT_BLACK);
+    d.print(g_ui.msg);
+  } else {
+    d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    d.print("`dice TAB surf BS strip \\eng CTRL tilt SPC sus");
+  }
+  d.pushSprite(0, 0);
 }
+
+// --- serial ---
 
 void cpuBench() {
   static Synth bench;   // static: a voice pool is too big for the task stack
@@ -184,8 +509,9 @@ void cpuBench() {
     for (int i = 0; i < 2000; ++i) { float o[pd::audio::kBlock]; bench.render(o); }   // drain tails
     bench.handle({pd::EventType::Engine, (uint8_t)eng, 0, 0.0f});
     for (int p = 0; p < (int)pd::Param::Count; ++p)
-      bench.handle({pd::EventType::Param, (uint8_t)p, 0, g_ui.params[p]});
-    for (int n = 0; n < kVoices; ++n) bench.handle({pd::EventType::NoteOn, (uint8_t)(48 + 4 * n), 100, 0.0f});
+      bench.handle({pd::EventType::Param, (uint8_t)p, 0, effective(p)});
+    for (int n = 0; n < kVoices; ++n)
+      bench.handle({pd::EventType::NoteOn, (uint8_t)(n + 1), 100, 48.0f + 4 * n});
     float o[pd::audio::kBlock];
     uint32_t sum = 0, peak = 0;
     for (int b = 0; b < kBlocks; ++b) {
@@ -202,35 +528,57 @@ void cpuBench() {
   bench.handle({pd::EventType::AllOff, 0, 0, 0.0f});
 }
 
+void printState(const pd::audio::Stats& s) {
+  Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(%+.2f,%+.2f) voices=%d "
+                "load=%lu.%lu%% peak=%lu.%lu%% late=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
+                "h=%.2f t=%.2f m=%.2f x=%.2f\n",
+                pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
+                g_ui.sustain, g_ui.tilt, g_ui.tiltOff[1], g_ui.tiltOff[2], g_synth.activeVoices(),
+                (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
+                (unsigned long)(s.loadPeakPermil / 10), (unsigned long)(s.loadPeakPermil % 10),
+                (unsigned long)s.lateWrites, (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave, g_ui.root, g_ui.bpm,
+                effective(0), effective(1), effective(2), effective(3));
+}
+
+int hexDigit(int ch) {
+  if (ch >= '0' && ch <= '9') return ch - '0';
+  if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+  return -1;
+}
+
 void controlTask(void*) {
-  uint32_t lastStats = millis();
+  uint32_t lastStats = millis(), lastDraw = 0, lastTilt = 0;
   pd::audio::Stats stats = {};
   pd::keys::KeyEvent ev[10];
+  Serial.setTimeout(50);
   for (;;) {
     const int n = pd::keys::poll(ev, 10);
-    for (int i = 0; i < n; ++i) onKey(ev[i]);
-    serviceRepeat(millis());
+    for (int i = 0; i < n; ++i) onKey(ev[i].row, ev[i].col, ev[i].pressed);
+    const uint32_t now = millis();
+    serviceRepeat(now);
+    serviceDice(now);
+    serviceRatchet();
+    if (now - lastTilt >= 10) { lastTilt = now; serviceTilt(); }
     while (Serial.available()) {
       const int c = Serial.read();
       if (c == '[') setDac(g_ui.dacVol - 6);
       else if (c == ']') setDac(g_ui.dacVol + 6);
-      else if (c == 'i') g_ui.dirty = true;
+      else if (c == 'i') printState(stats);
       else if (c == 'B') cpuBench();
+      else if (c == 'K') {
+        char b[3];
+        if (Serial.readBytes(b, 3) == 3 && b[0] >= '0' && b[0] <= '3' && hexDigit(b[1]) >= 0)
+          onKey(b[0] - '0', hexDigit(b[1]), b[2] == '+');
+      }
     }
-    if (millis() - lastStats >= 1000) {
-      lastStats = millis();
+    if (now - lastStats >= 1000) {
+      lastStats = now;
       stats = pd::audio::takeStats();
-      Serial.printf("pd engine=%s voices=%d load=%lu.%lu%% peak=%lu.%lu%% late=%lu rxshort=%lu "
-                    "dac_db=%+.1f oct=%d h=%.2f t=%.2f m=%.2f x=%.2f\n",
-                    pd::engineName((pd::EngineId)g_ui.engine), g_synth.activeVoices(),
-                    (unsigned long)(stats.loadAvgPermil / 10), (unsigned long)(stats.loadAvgPermil % 10),
-                    (unsigned long)(stats.loadPeakPermil / 10), (unsigned long)(stats.loadPeakPermil % 10),
-                    (unsigned long)stats.lateWrites, (unsigned long)stats.rxShort,
-                    (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave,
-                    g_ui.params[0], g_ui.params[1], g_ui.params[2], g_ui.params[3]);
+      printState(stats);
       g_ui.dirty = true;
     }
-    if (g_ui.dirty) { draw(stats); g_ui.dirty = false; }
+    if (g_ui.msg && (int32_t)(now - g_ui.msgUntil) >= 0) { g_ui.msg = nullptr; g_ui.dirty = true; }
+    if (g_ui.dirty && now - lastDraw >= kDrawMs) { lastDraw = now; draw(stats); g_ui.dirty = false; }
     vTaskDelay(1);
   }
 }
@@ -244,13 +592,17 @@ void setup() {
   cfg.internal_mic = false;
   M5Cardputer.begin(cfg, false);   // our own TCA8418 driver, not M5's keyboard
   M5Cardputer.Display.fillScreen(TFT_BLACK);
+  g_canvas.setColorDepth(16);
+  const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
   const bool keysOk = pd::keys::begin();
   const bool audioOk = pd::audio::begin(render);
   if (audioOk) setDac(kDacDefault);
-  Serial.printf("pd begin: audio=%s keys=%s\n", audioOk ? "ok" : "FAIL", keysOk ? "ok" : "FAIL");
-  for (int p = 0; p < (int)pd::Param::Count; ++p)
-    send(pd::EventType::Param, (uint8_t)p, 0, g_ui.params[p]);
-  xTaskCreatePinnedToCore(controlTask, "pd_ctrl", 6144, nullptr, 2, nullptr, 0);
+  Serial.printf("pd begin: audio=%s keys=%s imu=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
+                keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", canvasOk ? "ok" : "FAIL",
+                (unsigned long)ESP.getFreeHeap());
+  g_ui.seed = pd::rng::hash32(micros());
+  pushParams();
+  xTaskCreatePinnedToCore(controlTask, "pd_ctrl", 8192, nullptr, 2, nullptr, 0);
 }
 
 void loop() { vTaskDelete(nullptr); }

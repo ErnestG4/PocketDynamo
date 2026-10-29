@@ -35,18 +35,18 @@ int main() {
     s.handle({EventType::Engine, (uint8_t)eng, 0, 0.0f});
     check(runPeak(s, 10) == 0.0f, "silent before any note");
 
-    s.handle({EventType::NoteOn, 60, 100, 0.0f});
+    s.handle({EventType::NoteOn, 1, 100, 60.0f});
     const float on = runPeak(s, 200);
     check(on > 0.1f, "a held note sounds");
     check(s.activeVoices() == 1, "one voice for one note");
 
-    s.handle({EventType::NoteOff, 60, 0, 0.0f});
+    s.handle({EventType::NoteOff, 1, 0, 0.0f});
     runPeak(s, (int)(0.4f * kSampleRate / kBlock));   // past the 250 ms release
     check(s.activeVoices() == 0, "voice frees after release");
     check(runPeak(s, 10) == 0.0f, "silent after release");
 
     // Seven notes on six voices: the oldest is stolen, the pool stays full.
-    for (int n = 0; n < 7; ++n) s.handle({EventType::NoteOn, (uint8_t)(48 + n), 100, 0.0f});
+    for (int n = 0; n < 7; ++n) s.handle({EventType::NoteOn, (uint8_t)(10 + n), 100, 48.0f + n});
     runPeak(s, 50);
     check(s.activeVoices() == 6, "pool saturates at six");
     s.handle({EventType::AllOff, 0, 0, 0.0f});
@@ -57,10 +57,36 @@ int main() {
     for (int p = 0; p < (int)Param::Count; ++p)
       for (float v : {0.0f, 1.0f}) {
         s.handle({EventType::Param, (uint8_t)p, 0, v});
-        s.handle({EventType::NoteOn, 72, 127, 0.0f});
+        s.handle({EventType::NoteOn, 2, 127, 72.0f});
         runPeak(s, 40);
-        s.handle({EventType::NoteOff, 72, 0, 0.0f});
+        s.handle({EventType::NoteOff, 2, 0, 0.0f});
       }
+    s.handle({EventType::AllOff, 0, 0, 0.0f});
+    runPeak(s, (int)(0.4f * kSampleRate / kBlock));
+
+    // A chord is several NoteOns under one tag; one NoteOff ends all of it,
+    // and leaves other tags alone.
+    for (float n : {60.0f, 63.5f, 67.0f}) s.handle({EventType::NoteOn, 5, 100, n});
+    s.handle({EventType::NoteOn, 6, 100, 48.0f});
+    runPeak(s, 20);
+    check(s.activeVoices() == 4, "chord takes a voice per note");
+    s.handle({EventType::NoteOff, 5, 0, 0.0f});
+    runPeak(s, (int)(0.4f * kSampleRate / kBlock));
+    check(s.activeVoices() == 1, "one NoteOff ends the whole chord, not other tags");
+
+    // Ratchet: a retrigger with a decay falls silent while still held; a
+    // retrigger with 0 brings it back to a held note.
+    s.handle({EventType::Retrigger, 6, 0, 30.0f});
+    runPeak(s, 3);
+    check(runPeak(s, 30) > 0.05f, "a ratchet hit sounds");
+    runPeak(s, (int)(0.1f * kSampleRate / kBlock));
+    check(runPeak(s, 10) < 0.01f, "a ratchet hit decays while gated");
+    check(s.activeVoices() == 1, "a decayed ratchet voice is still held");
+    s.handle({EventType::Retrigger, 6, 0, 0.0f});
+    runPeak(s, 50);
+    check(runPeak(s, 100) > 0.05f, "retrigger 0 returns to a held note");
+    s.handle({EventType::AllOff, 0, 0, 0.0f});
+
     printf("%s ok (held-note peak %.3f)\n", engineName((EngineId)eng), on);
   }
   return 0;

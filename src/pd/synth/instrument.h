@@ -32,8 +32,9 @@ class Instrument {
 
   void handle(const Event& e) {
     switch (e.type) {
-      case EventType::NoteOn:  noteOn(e.a, e.b); break;
-      case EventType::NoteOff: noteOff(e.a); break;
+      case EventType::NoteOn:    noteOn(e.a, e.b, e.value); break;
+      case EventType::NoteOff:   noteOff(e.a); break;
+      case EventType::Retrigger: retrigger(e.a, e.value); break;
       case EventType::Param:
         if (e.a < (uint8_t)Param::Count) params_[e.a] = clamp(e.value, 0.0f, 1.0f);
         break;
@@ -41,7 +42,7 @@ class Instrument {
         if (e.a < (uint8_t)EngineId::Count) engine_ = (EngineId)e.a;
         break;
       case EventType::AllOff:
-        for (auto& v : voices_) v.env.gateOff();
+        for (auto& v : voices_) { v.gated = false; v.env.gateOff(); }
         break;
     }
   }
@@ -55,7 +56,7 @@ class Instrument {
       if (!v.env.active()) continue;
       ++active_;
       EngineParams p;
-      p.note = (float)v.note;
+      p.note = v.note;
       p.harmonics = params_[(int)Param::Harmonics];
       p.timbre = params_[(int)Param::Timbre];
       p.morph = params_[(int)Param::Morph];
@@ -87,20 +88,22 @@ class Instrument {
     ZxPhaseEngine phase;
     Envelope env;
     EngineId engine = EngineId::ZxPulse;
-    uint8_t note = 0;
+    float note = 60.0f;
+    uint8_t tag = 0;
     bool gated = false;
     bool trigger = false;
     float gain = 1.0f;
     uint32_t age = 0;
   };
 
-  void noteOn(uint8_t note, uint8_t vel) {
+  void noteOn(uint8_t tag, uint8_t vel, float note) {
     Voice* v = nullptr;
     for (auto& c : voices_) if (!c.env.active()) { v = &c; break; }   // free
     if (!v) for (auto& c : voices_)                                    // oldest released
       if (c.env.released() && (!v || c.age < v->age)) v = &c;
     if (!v) for (auto& c : voices_) if (!v || c.age < v->age) v = &c;  // oldest
     v->note = note;
+    v->tag = tag;
     v->gated = true;
     v->trigger = true;
     v->engine = engine_;
@@ -109,9 +112,14 @@ class Instrument {
     v->env.gateOn();
   }
 
-  void noteOff(uint8_t note) {
+  void noteOff(uint8_t tag) {
     for (auto& v : voices_)
-      if (v.gated && v.note == note) { v.gated = false; v.env.gateOff(); }
+      if (v.gated && v.tag == tag) { v.gated = false; v.env.gateOff(); }
+  }
+
+  void retrigger(uint8_t tag, float decayMs) {
+    for (auto& v : voices_)
+      if (v.gated && v.tag == tag) { v.env.retrigger(decayMs); v.trigger = true; }
   }
 
   Voice voices_[kVoices];

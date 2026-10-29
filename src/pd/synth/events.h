@@ -8,15 +8,19 @@
 
 namespace pd {
 
-enum class EventType : uint8_t { NoteOn, NoteOff, Param, Engine, AllOff };
+enum class EventType : uint8_t { NoteOn, NoteOff, Retrigger, Param, Engine, AllOff };
 
 enum class Param : uint8_t { Harmonics, Timbre, Morph, Macro, Count };
 
+// Notes are addressed by tag, not pitch: the tag names what started them (a
+// key), so a chord is several NoteOns under one tag and one NoteOff ends it,
+// and pitches can be anywhere between the semitones.
 struct Event {
   EventType type;
-  uint8_t   a;      // NoteOn/Off: note. Param: Param id. Engine: engine id.
+  uint8_t   a;      // NoteOn/NoteOff/Retrigger: tag. Param: Param id. Engine: engine id.
   uint8_t   b;      // NoteOn: velocity 1..127.
-  float     value;  // Param: 0..1.
+  float     value;  // NoteOn: pitch, MIDI note, fractional. Retrigger: decay ms,
+                    // 0 = hold as a normal note. Param: 0..1.
 };
 
 template <int N>
