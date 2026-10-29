@@ -7,6 +7,15 @@
 // sample rate and are combined bitwise (XOR = boolean ring mod, OR/AND =
 // Squeeker-style decouplings), then decimated by a plain 4-sample box average
 // so partial fold-down survives — that is the timbre, not a defect.
+//
+// Brocot treatment (2026-10-29): bitwise mixing only repeats when every ratio
+// in the loop is simple, so nothing here is free-running any more. Osc 2 sits
+// on exact p/q ratios of osc 1 (integer increments), its beat is a rate in Hz
+// rather than a pitch offset, and the 1-bit flanger's delay is a 1/k fraction
+// of osc 1's period, read from a phase-indexed bit table. Before this the
+// flanger delay was a fixed sample count, and wherever the note's period
+// didn't divide by it the recursive XOR never repeated: FM-style noise that
+// moved around the keyboard (host/zx_phase_map.cpp draws the plane).
 #pragma once
 #include "../dsp/pulse_core.h"
 
@@ -39,15 +48,17 @@ class ZxPhaseEngine : public Engine {
       zone_ = candidate;
     const float zone_position = clamp(raw_zone - (float)zone_, 0.0f, 1.0f);
 
-    // 1-bit flanger: XOR the bus with itself N internal samples ago. Position
-    // within each mix zone sweeps the comb from off, through slow metallic
-    // (~375 Hz), up to supersonic shimmer.
+    // 1-bit flanger: XOR the bus with itself 1/k of an osc-1 period ago.
+    // Position within each mix zone steps k up the harmonic series (with
+    // hysteresis), so the comb climbs from a hollow octave to a high
+    // shimmer, and stays pitched on every note.
     const bool feedback_on = zone_position > 0.15f;
-    uint32_t feedback_delay = 2;
     if (feedback_on) {
-      const float q = (zone_position - 0.15f) * (1.0f / 0.85f);
-      feedback_delay = (uint32_t)(512.0f * semitonesToRatio(-72.0f * q));  // 512 .. 8
-      if (feedback_delay < 2) feedback_delay = 2;
+      const float raw_comb = (zone_position - 0.15f) * (1.0f / 0.85f) * ((float)kCombs - 0.01f);
+      const int c = clamp((int)raw_comb, 0, kCombs - 1);
+      if (comb_ < 0 || (c != comb_ &&
+          (raw_comb > (float)comb_ + 1.08f || raw_comb < (float)comb_ - 0.08f)))
+        comb_ = c;
     }
 
     // TIMBRE is PWM motion on osc2: CCW static fat squares, then the
@@ -60,27 +71,28 @@ class ZxPhaseEngine : public Engine {
     const int sweep_min = 14 - (int)(ps * 12.99f);   // 14 .. 2
     const int sweep_period = 8 - (int)(ps * 7.0f);   // 8 .. 1 ticks
     const int base_index = 14;  // both oscillators rest at fat 4-bit squares
-    const uint32_t duty1 = (uint32_t)((float)base_index * (1.0f / 32.0f) * kTwo32);
     if (duty2_index_ < 0 || !sweep_on) duty2_index_ = base_index;
 
-    // MORPH: fine beating at unison, then a hysteresis-quantized interval
-    // ladder (each step keeps a slow beat so the interference stays alive),
-    // then LFSR noise.
+    // MORPH: beating at unison (0 → 3 Hz), then a hysteresis-quantized
+    // ladder of just ratios, each with a slow beat so the interference stays
+    // alive, then LFSR noise. Beats are rates of the whole pattern in Hz, so
+    // a position sounds the same speed on every note.
     const float morph = p.morph;
     if (!noise_mode_ && morph > 0.92f) noise_mode_ = true;
     else if (noise_mode_ && morph < 0.88f) noise_mode_ = false;
-    float detune_semitones;
+    float beat_hz;
     if (morph < 0.25f) {
-      detune_semitones = morph * (1.0f / 0.25f) * 0.30f;
+      const float x = morph * (1.0f / 0.25f);
+      beat_hz = kUnisonBeatHz * x * x;
+      interval_ = 0;
     } else {
-      static constexpr float kIntervals[6] = {0.0f, 5.0f, 7.0f, 12.0f, 19.0f, 24.0f};
       const float x = clamp((morph - 0.25f) * (1.0f / 0.65f), 0.0f, 1.0f);
-      const float raw_step = x * 5.99f;
-      const int step = clamp((int)raw_step, 0, 5);
+      const float raw_step = x * ((float)kRatios - 0.01f);
+      const int step = clamp((int)raw_step, 0, kRatios - 1);
       if (step != interval_ &&
           (raw_step > (float)interval_ + 1.08f || raw_step < (float)interval_ - 0.08f))
         interval_ = step;
-      detune_semitones = kIntervals[interval_] + 0.06f;
+      beat_hz = kLadderBeatHz;
     }
 
     // macro: CCW arms the TRIG kick-slide (beeper click-drums: a strike slams
@@ -95,16 +107,31 @@ class ZxPhaseEngine : public Engine {
     float dt1 = clamp(noteToDt(p.note - 24.0f + kick_), 0.0f, 0.2f);
     kick_ *= std::pow(kKickDecay, (float)size * (1.0f / kPlaitsBlock));
     if (kick_ < 0.05f) kick_ = 0.0f;
-    float dt2 = dt1 * semitonesToRatio(detune_semitones);
-    if (noise_mode_) dt2 *= kNoiseClockRatio;
-    dt2 = clamp(dt2, 0.0f, 0.24f);
     const uint32_t increment1 = (uint32_t)(dt1 * kTwo30);
-    const uint32_t increment2 = (uint32_t)(dt2 * kTwo30);
+    // Osc 2 = osc 1 x p/q exactly, plus the beat spread over the q cycles
+    // the pattern takes to repeat (capped at 3 % of osc 1 on the lowest
+    // notes, where a few Hz would be a detune rather than a beat).
+    const Ratio r = kRatioLadder[interval_];
+    beat_hz = std::min(beat_hz, 0.03f * dt1 * kSampleRate);
+    uint64_t inc2 = (uint64_t)increment1 * r.p / r.q +
+                    (uint64_t)(beat_hz / (float)r.q * (kTwo30 / kSampleRate));
+    if (noise_mode_) inc2 *= (uint64_t)kNoiseClockRatio;
+    const uint32_t increment2 = (uint32_t)std::min<uint64_t>(inc2, (uint64_t)(0.24f * kTwo30));
+
+    // The flanger's tap, 1/k of osc 1's period back, read straight off the
+    // phase accumulators (osc 2 has moved its own share of that time), so
+    // the delay is exact at any pitch and needs no buffer. In noise mode the
+    // tap counts osc 2's wraps back into the LFSR's output history.
+    const uint32_t tap1 = (uint32_t)(4294967296.0 / kCombHarmonic[comb_ < 0 ? 0 : comb_]);
+    const uint64_t tap2_long = (uint64_t)tap1 * increment2 / (increment1 ? increment1 : 1u);
+    const uint32_t tap2 = (uint32_t)tap2_long;
+    const uint32_t tap2_wraps = (uint32_t)(tap2_long >> 32);
 
     const uint32_t ghost_duty = macro > 0.5f
         ? (uint32_t)((macro * 2.0f - 1.0f) * 0.35f * kTwo32)
         : 0u;
 
+    const uint32_t duty1 = zone_ == 2 ? kAndDuty1 : kDuty1;
     for (size_t i = 0; i < size; ++i) {
       if (tick_.next() && sweep_on) {
         ++sweep_count_;
@@ -121,6 +148,7 @@ class ZxPhaseEngine : public Engine {
         const uint32_t previous2 = phase2_;
         phase2_ += increment2;
         if (phase2_ < previous2) {
+          lfsr_history_ = (lfsr_history_ << 1) | (lfsr_ & 1u);
           const uint16_t fb = (lfsr_ ^ (lfsr_ >> 1)) & 1u;
           lfsr_ = (uint16_t)((lfsr_ >> 1) | (fb << 14));
         }
@@ -128,13 +156,17 @@ class ZxPhaseEngine : public Engine {
         const int b2 = noise_mode_ ? (int)(lfsr_ & 1u) : (phase2_ < duty2 ? 1 : 0);
         int mixed = zone_ == 0 ? (b1 ^ b2) : zone_ == 1 ? (b1 | b2) : (b1 & b2);
         if (feedback_on) {
-          const uint32_t tap = (feedback_pos_ - feedback_delay) & 511u;
-          mixed ^= (int)((feedback_bits_[tap >> 5] >> (tap & 31u)) & 1u);
+          const uint32_t q1 = phase1_ - tap1, q2 = phase2_ - tap2;
+          const int d1 = q1 < duty1 ? 1 : 0;
+          int d2;
+          if (noise_mode_) {
+            const uint32_t back = tap2_wraps + (phase2_ < tap2 ? 1u : 0u);
+            d2 = back == 0 ? (int)(lfsr_ & 1u) : (int)((lfsr_history_ >> (back < 64 ? back - 1 : 63)) & 1u);
+          } else {
+            d2 = q2 < duty2 ? 1 : 0;
+          }
+          mixed ^= zone_ == 0 ? (d1 ^ d2) : zone_ == 1 ? (d1 | d2) : (d1 & d2);
         }
-        const uint32_t wp = feedback_pos_ & 511u;
-        feedback_bits_[wp >> 5] =
-            (feedback_bits_[wp >> 5] & ~(1u << (wp & 31u))) | ((uint32_t)mixed << (wp & 31u));
-        ++feedback_pos_;
         if (ghost_duty) {
           ghost_phase_ += kGhostIncrement;
           mixed ^= ghost_phase_ < ghost_duty ? 1 : 0;
@@ -165,18 +197,33 @@ class ZxPhaseEngine : public Engine {
   static constexpr float kKickDecay = 0.9835f;
   static constexpr float kPlaitsBlock = 12.0f;
 
+  struct Ratio { uint32_t p, q; };
+  // MORPH's ladder: unison, 4/3, 3/2, 2, 3, 4 (the old 0/5/7/12/19/24
+  // semitones, made just), short Stern-Brocot paths all.
+  static constexpr int kRatios = 6;
+  static constexpr Ratio kRatioLadder[kRatios] = {{1, 1}, {4, 3}, {3, 2}, {2, 1}, {3, 1}, {4, 1}};
+  static constexpr float kUnisonBeatHz = 3.0f;
+  static constexpr float kLadderBeatHz = 0.4f;
+  // Flanger comb positions: the delay is 1/k of osc 1's period.
+  static constexpr int kCombs = 11;
+  static constexpr uint8_t kCombHarmonic[kCombs] = {2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 32};
+  static constexpr uint32_t kDuty1 = (uint32_t)(14.0 / 32.0 * 4294967296.0);
+  // AND needs overlap: a wider osc 1 keeps unison drift from gating to
+  // silence (14/32 + 14/32 < 1 left an eighth of every beat dead).
+  static constexpr uint32_t kAndDuty1 = (uint32_t)(20.0 / 32.0 * 4294967296.0);
+
   pulse::FrameTick tick_;
   uint32_t phase1_ = 0, phase2_ = 0, ghost_phase_ = 0;
   uint16_t lfsr_ = 0xACE1u;
+  uint64_t lfsr_history_ = 0;  // past LFSR outputs, newest at bit 0
   int zone_ = 0;            // hysteretic mix-method zone: 0 XOR, 1 OR, 2 AND
-  int interval_ = 0;        // hysteretic MORPH interval-ladder step
+  int interval_ = 0;        // hysteretic MORPH ratio-ladder step
+  int comb_ = -1;           // hysteretic flanger comb position
   bool noise_mode_ = false; // hysteretic MORPH extreme: osc2 becomes an LFSR
   int duty2_index_ = -1;
   int sweep_direction_ = 1;
   uint32_t sweep_count_ = 0;
   float dc_main_ = 0.0f, dc_aux_ = 0.0f;
-  uint32_t feedback_bits_[16] = {};
-  uint32_t feedback_pos_ = 0;
   float kick_ = 0.0f;       // TRIG kick-slide, semitones above played pitch
 };
 

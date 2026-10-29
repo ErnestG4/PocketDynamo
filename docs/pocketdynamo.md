@@ -104,7 +104,7 @@ Their bars turn green. Switching tilt off returns them to their set values.
 | Engine | HARMONICS | TIMBRE | MORPH | MACRO (CCW / CW) |
 |---|---|---|---|---|
 | **ZX PULSE**: Tim Follin-style pin trains | chord (Plaits' set) | pin width, which is also the level | builds the stack (lower half), then an arp whose rate rises (upper half) | exaggerated pitch pull / echo |
-| **ZX PHASE**: Phaser1-style 1-bit interference | mix method (XOR / OR / AND), with a 1-bit flanger inside each zone | PWM sweep on the second oscillator | unison beating → interval ladder → noise | kick-slide drum / ghost carrier |
+| **ZX PHASE**: Phaser1-style 1-bit interference | mix method (XOR / OR / AND), with a 1-bit flanger inside each zone that steps up the harmonic series | PWM sweep on the second oscillator | unison beating → just ratios (4/3, 3/2, 2, 3, 4) → noise | kick-slide drum / ghost carrier |
 | **BROCOT FM**: parallel true FM on Stern-Brocot ratios | ratio family: harmonic → Avatar → Golden convergents (sweep it for the zipper) | FM index, tamed on high notes | DX feedback ← sine (middle) → Fritz double pulse | brass swell / bell strike |
 | **MODAL**: struck resonators | the object: string, stiff string, marimba, glockenspiel, kalimba / Rhodes tine, drum, bell, gong | the mallet, felt → metal (shapes the next strike) | decay, 50 ms → 20 s | metallic noise wash / Rhodes pickup bark |
 | **SAMPLE**: the take as a varispeed record | slice (or start point) | length, 20 ms → the rest of the take | forward, loop, ping-pong, reverse | tape-dull / SP grit |
