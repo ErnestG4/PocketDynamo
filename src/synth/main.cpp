@@ -238,7 +238,7 @@ static void noteOn(char key, int semitone, uint8_t velocity) {
 // Render one CHUNK: sum all active voices, apply the per-voice SVF filter
 // (now inside voiceSample), the global vibrato LFO + pitch bend, and the
 // soft limiter on the mix. No master filter — filtering is per-voice.
-static void renderChunk() {
+static void renderChunk(bool play = true) {
   uint32_t t0 = micros();
   // Step sequencer: advance the clock by one block. On a step boundary, release
   // each track's previous note and trigger its new step. (MIDI-out per step is a
@@ -281,7 +281,7 @@ static void renderChunk() {
     if (g_lfoPhase >= TWO_PI) g_lfoPhase -= TWO_PI;
   }
   g_renderUs = micros() - t0;                          // render cost for CHUNK
-  M5.Speaker.playRaw(g_buf, CHUNK, SR, false, 1, 0);   // channel 0, no repeat
+  if (play) M5.Speaker.playRaw(g_buf, CHUNK, SR, false, 1, 0);   // channel 0, no repeat
 }
 
 // Release the arp's currently-sounding voice + its MIDI note, if any.
@@ -389,14 +389,17 @@ void setup() {
 // PERF BENCH: send 'B' over USB serial. Holds a full N_VOICES chord on the
 // current source, times BENCH_BLOCKS render blocks, prints avg/peak µs against
 // the CHUNK budget, then releases the chord. Repeatable A/B for engine changes.
+// Renders silently once the speaker has drained: with audio queued, the
+// higher-priority speaker task preempts the render and the timing reads back
+// as the playback rate rather than compute.
 static constexpr int BENCH_BLOCKS = 250;   // ~2 s @ 256/32k
 static void perfBench() {
   static const int notes[N_VOICES] = {48, 52, 55, 60, 64, 67};
   for (int i = 0; i < N_VOICES; i++) noteOnMidi((char)(0x10 + i), notes[i], 100);
   uint32_t sum = 0, peak = 0;
+  while (M5.Speaker.isPlaying(0)) delay(1);
   for (int n = 0; n < BENCH_BLOCKS; n++) {
-    while (M5.Speaker.isPlaying(0) >= 2) delay(0);
-    renderChunk();
+    renderChunk(false);
     sum += g_renderUs;
     if (g_renderUs > peak) peak = g_renderUs;
   }
