@@ -55,8 +55,17 @@ pd::Looper g_looper;
 
 void render(const float* in, float* out, size_t n) {
   pd::sampleStore().record(in, n);   // no-op unless a take is running
+  // Strike budget: at most kStrikesPerBlock note-ons start per block; the
+  // rest wait in the queue (in order) for the next block, 0.67 ms later. A
+  // chord's setup cost (MODAL's strike state, FM's coefficients) then never
+  // lands on one block all at once.
+  constexpr int kStrikesPerBlock = 4;
+  int strikes = 0;
   pd::Event e;
-  while (g_events.pop(&e)) g_synth.handle(e);
+  while (strikes < kStrikesPerBlock && g_events.pop(&e)) {
+    g_synth.handle(e);
+    strikes += e.type == pd::EventType::NoteOn;
+  }
   g_synth.render(out);
 }
 
@@ -780,13 +789,15 @@ void cpuBench() {
 void printState(const pd::audio::Stats& s) {
   Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(t%.2f,m%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
-                "h=%.2f t=%.2f m=%.2f x=%.2f\n",
+                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
                 g_ui.sustain, g_ui.tilt, effective(1), effective(2), g_synth.activeVoices(),
                 (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
                 (unsigned long)(s.loadPeakPermil / 10), (unsigned long)(s.loadPeakPermil % 10),
                 (unsigned long)s.lateWrites, (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave, g_ui.root, g_ui.bpm,
-                effective(0), effective(1), effective(2), effective(3));
+                effective(0), effective(1), effective(2), effective(3),
+                pd::sampleStore().ready() ? (float)pd::sampleStore().length() / pd::SampleStore::kRate : 0.0f,
+                pd::sampleStore().slices());
 }
 
 int hexDigit(int ch) {

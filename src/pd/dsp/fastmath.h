@@ -19,8 +19,7 @@ namespace fastmath {
 inline float exp2(float x) {
   if (x < -126.0f) return 0.0f;
   if (x > 127.0f) x = 127.0f;
-  int k = (int)x;                 // truncates toward zero; fix up to floor
-  if ((float)k > x) --k;
+  const int k = (int)(x + 128.0f) - 128;   // floor: x + 128 > 0 truncates down
   const float f = x - (float)k;
   const float p = 1.0f + f * (0.69314718f + f * (0.24022651f + f * (0.05550411f +
                   f * (0.00961813f + f * (0.00133336f + f * 0.00015403f)))));
@@ -75,6 +74,40 @@ inline float recip(float x) {
   y = y * (2.0f - x * y);
   y = y * (2.0f - x * y);
   return y;
+}
+
+// recip with two Newton steps, within ~1e-5: for gains and levels.
+inline float recipFast(float x) {
+  uint32_t u;
+  std::memcpy(&u, &x, sizeof u);
+  u = 0x7EF311C3u - u;
+  float y;
+  std::memcpy(&y, &u, sizeof y);
+  y = y * (2.0f - x * y);
+  y = y * (2.0f - x * y);
+  return y;
+}
+
+// e^x for 0 <= x <= 0.05 (the reciprocal of a pole radius e^-x): five terms,
+// exact to ~3e-10 there.
+inline float expSmall(float x) {
+  return 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * 0.041666667f)));
+}
+
+// sqrt for levels and amplitudes (x >= 0): the reciprocal root's bit-trick
+// seed and two Newton steps, within ~5e-6 relative; 0 below 1e-30. libm's
+// sqrtf is a call on the ESP32-S3.
+inline float sqrt(float x) {
+  if (!(x > 1e-30f)) return 0.0f;
+  uint32_t u;
+  std::memcpy(&u, &x, sizeof u);
+  u = 0x5F375A86u - (u >> 1);
+  float y;
+  std::memcpy(&y, &u, sizeof y);
+  const float h = 0.5f * x;
+  y = y * (1.5f - h * y * y);
+  y = y * (1.5f - h * y * y);
+  return x * y;
 }
 
 }  // namespace fastmath

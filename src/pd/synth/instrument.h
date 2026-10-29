@@ -83,10 +83,10 @@ class Instrument {
   void render(float* out) {
     for (size_t i = 0; i < kBlock; ++i) out[i] = 0.0f;
     float main[kBlock], aux[kBlock];
-    active_ = 0;
+    int active = 0;   // published once, at the end: the UI core reads it
     for (auto& v : voices_) {
       if (!v.env.active()) continue;
-      ++active_;
+      ++active;
       EngineParams p;
       p.note = v.note;
       p.harmonics = params_[(int)Param::Harmonics];
@@ -104,6 +104,7 @@ class Instrument {
       const float dg = (g1 - g0) * (1.0f / kBlock);
       for (size_t i = 0; i < kBlock; ++i) { out[i] += main[i] * g0; g0 += dg; }
     }
+    active_ = active;
     // Soft clip: cubic, unity slope at 0, reaching +-1 with zero slope at +-1.5.
     for (size_t i = 0; i < kBlock; ++i) {
       float x = clamp(out[i] * master_, -1.5f, 1.5f);
@@ -182,7 +183,7 @@ class Instrument {
   float master_ = 1.0f;
   float tempo_ = 120.0f;
   uint32_t clock_ = 0;
-  int active_ = 0;
+  volatile int active_ = 0;
 };
 
 }  // namespace pd

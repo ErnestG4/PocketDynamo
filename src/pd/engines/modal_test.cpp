@@ -3,8 +3,10 @@
 #include "engines/modal.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 using namespace pd;
 
@@ -198,7 +200,69 @@ int main(int argc, char** argv) {
     printf("pickup MACRO %.2f: h2 re h1 %+.1f dB\n", x, 20.0 * std::log10(mag(2 * f0) / mag(f0)));
   }
 
-  // 9. Optional WAVs.
+  // 9. A voice reset and struck again sounds exactly as a new one would: the
+  // coefficients and caches reset() keeps are only ever what the controls
+  // build. Both the rebuild path (another note, other controls) and the
+  // no-rebuild path (the same note and controls) — and a NaN control is
+  // harmless.
+  {
+    float oa[kBlock], aa[kBlock], ob[kBlock], ab[kBlock];
+    const EngineParams first = params(72.0f, 0.2f, 0.9f, 0.3f, 0.5f);
+    for (const EngineParams& second : {params(48.0f, 6.0f / 7.0f, 0.3f, 0.8f, 0.7f), first}) {
+      ModalEngine used, fresh;
+      run(used, first, 40, true);
+      used.reset();
+      float worst = 0.0f;
+      for (int b = 0; b < kBlocksPerSecond / 2; ++b) {
+        EngineParams p = second;
+        p.trigger = b == 0 ? kTriggerRising : 0;
+        used.render(p, oa, aa, kBlock);
+        fresh.render(p, ob, ab, kBlock);
+        for (size_t i = 0; i < kBlock; ++i) worst = std::max(worst, std::fabs(oa[i] - ob[i]) + std::fabs(aa[i] - ab[i]));
+      }
+      check(worst < 1e-6f, "a reset voice strikes as a new one");
+    }
+    ModalEngine e;
+    EngineParams p = params(60.0f, 0.5f, 0.5f, 0.5f, 0.5f);
+    run(e, p, 10, true);
+    p.harmonics = p.timbre = p.morph = p.macro = p.note = std::nanf("");
+    run(e, p, 10, true);
+    printf("reset reuse matches a new voice; NaN controls stay finite\n");
+  }
+
+  // 10. Cost proxy: a strike's setup (rebuild + strike, one-sample render)
+  // against a steady 16-mode block, on the host. Printed, not asserted: the
+  // ratio, not the time, is what carries to the LX7 (where a steady 16-mode
+  // voice-block bench at ~8k cycles), and only roughly.
+  {
+    using clk = std::chrono::steady_clock;
+    static ModalEngine v[8];
+    float o[kBlock], a[kBlock];
+    EngineParams p = params(50.0f, 6.0f / 7.0f, 1.0f, 1.0f, 0.5f);
+    for (int i = 0; i < 8; ++i) { p.trigger = kTriggerRising; v[i].render(p, o, a, kBlock); }
+    p.trigger = 0;
+    for (int b = 0; b < 50; ++b) for (int i = 0; i < 8; ++i) v[i].render(p, o, a, kBlock);
+    auto time = [&](auto&& f) {
+      const int n = 40000;
+      const auto t0 = clk::now();
+      for (int i = 0; i < n; ++i) f(i);
+      return std::chrono::duration<double, std::nano>(clk::now() - t0).count() / n;
+    };
+    const double steady = time([&](int i) { v[i & 7].render(p, o, a, kBlock); });
+    const double idle = time([&](int i) { v[i & 7].reset(); p.trigger = 0; v[i & 7].render(p, o, a, 1); });
+    const double fresh = time([&](int i) {
+      v[i & 7].reset(); p.note = 40.0f + (float)(i & 15); p.trigger = kTriggerRising; v[i & 7].render(p, o, a, 1); });
+    for (int i = 0; i < 8; ++i) { p.note = 50.0f; p.trigger = kTriggerRising; v[i].render(p, o, a, kBlock); }
+    const double again = time([&](int i) { p.note = 50.0f; p.trigger = kTriggerRising; v[i & 7].render(p, o, a, 1); });
+    const double steal = time([&](int i) {
+      p.note = 40.0f + 12.0f * (float)((i >> 3) & 1); p.trigger = kTriggerRising; v[i & 7].render(p, o, a, 1); });
+    p.trigger = 0;
+    const double glide = time([&](int i) { p.note = 50.0f + 0.01f * (float)(i & 63); v[i & 7].render(p, o, a, 1); });
+    printf("cost proxy (host, in steady 16-mode blocks): fresh strike %.2f, re-strike %.2f, steal %.2f, glide rebuild %.2f\n",
+           (fresh - idle) / steady, (again - idle) / steady, (steal - idle) / steady, (glide - idle) / steady);
+  }
+
+  // 11. Optional WAVs.
   if (argc > 1) {
     struct Patch { const char* name; float note, h, t, m, x; };
     const Patch patches[] = {

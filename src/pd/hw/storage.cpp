@@ -34,8 +34,10 @@ bool begin() {
 void report() {
   static const char* kTypes[] = {"none", "MMC", "SD", "SDHC", "unknown"};
   const uint8_t t = g_mounted ? SD.cardType() : 0;
-  Serial.printf("sd mounted=%d type=%s size=%lluMB used=%lluMB\n", g_mounted, kTypes[t < 5 ? t : 4],
-                g_mounted ? SD.cardSize() >> 20 : 0ull, g_mounted ? SD.usedBytes() >> 20 : 0ull);
+  // (No used-space figure: FAT computes it by scanning the whole table,
+  // which blocks the control task for seconds on a big card.)
+  Serial.printf("sd mounted=%d type=%s size=%lluMB\n", g_mounted, kTypes[t < 5 ? t : 4],
+                g_mounted ? SD.cardSize() >> 20 : 0ull);
 }
 
 bool mounted() { return g_mounted; }
