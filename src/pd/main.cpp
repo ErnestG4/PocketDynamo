@@ -17,7 +17,8 @@
 // past upright) directly (ui/tilt.h); switching off returns their set values.
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
 // q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
-// BS undo the last dice. Holding a param, volume, root or tempo combo repeats.
+// BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
+// take, up to 3.3 s). Holding a param, volume, root or tempo combo repeats.
 // Serial: [ / ] volume, i = print state, B = silent CPU bench, K<row><col
 // hex><+|-> = press/release a key (for scripted tests).
 #include <Arduino.h>
@@ -43,7 +44,7 @@ Synth g_synth;
 pd::SpscQueue<128> g_events;
 
 void render(const float* in, float* out, size_t n) {
-  (void)in; (void)n;
+  pd::sampleStore().record(in, n);   // no-op unless a take is running
   pd::Event e;
   while (g_events.pop(&e)) g_synth.handle(e);
   g_synth.render(out);
@@ -97,6 +98,8 @@ struct Ui {
   bool  sustained[kKeys] = {};   // ...only because the pedal is down
   bool  physical[kKeys] = {};    // key is physically down (and played a note)
   uint32_t ratchetNext[kKeys] = {};   // micros of the next strike
+  int   recKey = -1;           // key holding a recording, or -1
+  uint32_t recStart = 0;
   uint32_t diceDown = 0;
   bool  diceHeld = false, diceDone = false;
   struct { char label = 0; uint8_t row, col; uint32_t next, interval; } repeat;
@@ -301,6 +304,38 @@ void allOff() {
   for (int k = 0; k < kKeys; ++k) g_ui.sounding[k] = g_ui.sustained[k] = false;
 }
 
+// --- recording: hold FN+R, the mic goes into the take ---
+
+void startRecording(int k) {
+  allOff();   // the speaker would be in the take
+  pd::sampleStore().startRecording();
+  g_ui.recKey = k;
+  g_ui.recStart = millis();
+  g_ui.dirty = true;
+}
+
+void stopRecording() {
+  if (g_ui.recKey < 0) return;
+  g_ui.recKey = -1;
+  auto& s = pd::sampleStore();
+  s.stopRecording();
+  vTaskDelay(2);   // let the audio core finish the block it may be appending
+  if (!s.analyze()) { flash("NOTHING HEARD"); return; }
+  static char msg[32];
+  snprintf(msg, sizeof msg, "TAKE %.1fs  %d SLICES", (float)s.length() / pd::SampleStore::kRate, s.slices());
+  flash(msg);
+  if (!pd::playsTake((pd::EngineId)g_ui.engine)) {
+    g_ui.engine = (int)pd::EngineId::Sample;
+    send(pd::EventType::Engine, (uint8_t)g_ui.engine);
+  }
+}
+
+void serviceRecording() {
+  if (g_ui.recKey < 0) return;
+  if (pd::sampleStore().full()) stopRecording();
+  else g_ui.dirty = true;   // the timer runs on screen
+}
+
 // --- key dispatch ---
 
 // One step of an FN combo. Returns the auto-repeat interval in ms, or 0 for
@@ -361,6 +396,7 @@ void onKey(int r, int c, bool pressed) {
   if (!pressed) {
     if (g_ui.repeat.label && g_ui.repeat.row == r && g_ui.repeat.col == c) g_ui.repeat.label = 0;
     if (k == g_ui.slotKey) releaseSlot();
+    if (k == g_ui.recKey) stopRecording();
     if (r == 0 && c == 0 && g_ui.diceHeld) {
       if (!g_ui.diceDone) doDice(false);
       g_ui.diceHeld = false;
@@ -371,6 +407,7 @@ void onKey(int r, int c, bool pressed) {
 
   if (g_ui.fn) {
     const char label = pd::keymap::kLabel[r][c];
+    if (label == 'r') { startRecording(k); return; }
     const uint32_t interval = fnAction(label);
     auto& rp = g_ui.repeat;
     rp.label = interval ? label : 0;
@@ -461,6 +498,15 @@ void draw(const pd::audio::Stats& s) {
   d.setTextColor(g_ui.tilt ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
   d.setCursor(88, 24);
   d.print("TILT");
+  d.setCursor(122, 24);
+  const auto& take = pd::sampleStore();
+  if (g_ui.recKey >= 0) {
+    d.setTextColor(TFT_RED, TFT_BLACK);
+    d.printf("REC %.1fs", (millis() - g_ui.recStart) * 1e-3f);
+  } else if (take.ready()) {
+    d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    d.printf("%.1fs/%d", (float)take.length() / pd::SampleStore::kRate, take.slices());
+  }
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(170, 24);
   d.printf("cpu %lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
@@ -554,6 +600,7 @@ void controlTask(void*) {
     serviceRepeat(now);
     serviceDice(now);
     serviceRatchet();
+    serviceRecording();
     if (now - lastTilt >= 10) { lastTilt = now; serviceTilt(); }
     while (Serial.available()) {
       const int c = Serial.read();

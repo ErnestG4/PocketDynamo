@@ -30,9 +30,21 @@ void check(bool c, const char* m) { if (!c) { fprintf(stderr, "FAIL: %s\n", m); 
 }  // namespace
 
 int main() {
+  // A take for the sampler engines: 1 s of a 220 Hz tone with harmonics.
+  {
+    static float take[SampleStore::kRate];
+    for (uint32_t i = 0; i < SampleStore::kRate; ++i) {
+      const float t = 6.2831853f * 220.0f * i / SampleStore::kRate;
+      take[i] = 0.4f * std::sin(t) + 0.2f * std::sin(2 * t) + 0.1f * std::sin(3 * t);
+    }
+    sampleStore().loadForTest(take, SampleStore::kRate);
+    check(sampleStore().analyze(), "test take loads");
+  }
   for (int eng = 0; eng < (int)EngineId::Count; ++eng) {
     Synth s;
     s.handle({EventType::Engine, (uint8_t)eng, 0, 0.0f});
+    // Blocks to wait out a release (to -80 dB) plus margin.
+    const int tail = (int)((releaseMs((EngineId)eng) * 1e-3f + 0.15f) * kSampleRate / kBlock);
     check(runPeak(s, 10) == 0.0f, "silent before any note");
 
     s.handle({EventType::NoteOn, 1, 100, 60.0f});
@@ -41,7 +53,7 @@ int main() {
     check(s.activeVoices() == 1, "one voice for one note");
 
     s.handle({EventType::NoteOff, 1, 0, 0.0f});
-    runPeak(s, (int)(0.4f * kSampleRate / kBlock));   // past the 250 ms release
+    runPeak(s, tail);   // past the release
     check(s.activeVoices() == 0, "voice frees after release");
     check(runPeak(s, 10) == 0.0f, "silent after release");
 
@@ -50,7 +62,7 @@ int main() {
     runPeak(s, 50);
     check(s.activeVoices() == 6, "pool saturates at six");
     s.handle({EventType::AllOff, 0, 0, 0.0f});
-    runPeak(s, (int)(0.4f * kSampleRate / kBlock));
+    runPeak(s, tail);
     check(s.activeVoices() == 0, "all-off releases everything");
 
     // Every control at both extremes stays finite and bounded.
@@ -62,7 +74,7 @@ int main() {
         s.handle({EventType::NoteOff, 2, 0, 0.0f});
       }
     s.handle({EventType::AllOff, 0, 0, 0.0f});
-    runPeak(s, (int)(0.4f * kSampleRate / kBlock));
+    runPeak(s, tail);
 
     // A chord is several NoteOns under one tag; one NoteOff ends all of it,
     // and leaves other tags alone.
@@ -71,7 +83,7 @@ int main() {
     runPeak(s, 20);
     check(s.activeVoices() == 4, "chord takes a voice per note");
     s.handle({EventType::NoteOff, 5, 0, 0.0f});
-    runPeak(s, (int)(0.4f * kSampleRate / kBlock));
+    runPeak(s, tail);
     check(s.activeVoices() == 1, "one NoteOff ends the whole chord, not other tags");
 
     // Ratchet: a retrigger with a decay falls silent while still held; a

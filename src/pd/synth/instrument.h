@@ -3,19 +3,36 @@
 // host tests drive the same object.
 #pragma once
 #include "../dsp/envelope.h"
+#include "../engines/cloud.h"
+#include "../engines/sampler.h"
 #include "../engines/zx_phase.h"
 #include "../engines/zx_pulse.h"
 #include "events.h"
 
 namespace pd {
 
-enum class EngineId : uint8_t { ZxPulse, ZxPhase, Count };
+enum class EngineId : uint8_t { ZxPulse, ZxPhase, Sample, Cloud, Count };
 
 inline const char* engineName(EngineId e) {
   switch (e) {
     case EngineId::ZxPulse: return "ZX PULSE";
     case EngineId::ZxPhase: return "ZX PHASE";
+    case EngineId::Sample:  return "SAMPLE";
+    case EngineId::Cloud:   return "CLOUD";
     default: return "?";
+  }
+}
+
+// Engines that play the recorded take (synth/sample_store.h).
+inline bool playsTake(EngineId e) { return e == EngineId::Sample || e == EngineId::Cloud; }
+
+// Amp release after key-up, per engine: buzzers stop like buzzers, a stab
+// gates with the key, a cloud thins out.
+inline float releaseMs(EngineId e) {
+  switch (e) {
+    case EngineId::Sample: return 60.0f;
+    case EngineId::Cloud:  return 500.0f;
+    default:               return 250.0f;
   }
 }
 
@@ -23,7 +40,7 @@ template <int kVoices, size_t kBlock>
 class Instrument {
  public:
   Instrument() {
-    for (auto& v : voices_) v.env.setTimes(2.0f, 250.0f, kBlock);
+    for (auto& v : voices_) v.env.setTimes(2.0f, releaseMs(EngineId::ZxPulse), kBlock);
     for (int i = 0; i < (int)Param::Count; ++i) params_[i] = 0.5f;
     params_[(int)Param::Harmonics] = 0.0f;   // single pin per key: Follin poly
     params_[(int)Param::Morph] = 0.0f;
@@ -63,7 +80,7 @@ class Instrument {
       p.macro = params_[(int)Param::Macro];
       p.trigger = v.trigger ? kTriggerRising : 0;
       v.trigger = false;
-      Engine& eng = v.engine == EngineId::ZxPulse ? (Engine&)v.pulse : (Engine&)v.phase;
+      Engine& eng = v.engineFor();
       eng.render(p, main, aux, kBlock);
       float g0, g1;
       v.env.advance(&g0, &g1);
@@ -86,6 +103,8 @@ class Instrument {
   struct Voice {
     ZxPulseEngine pulse;
     ZxPhaseEngine phase;
+    SamplerEngine sample;
+    CloudEngine cloud;
     Envelope env;
     EngineId engine = EngineId::ZxPulse;
     float note = 60.0f;
@@ -94,6 +113,15 @@ class Instrument {
     bool trigger = false;
     float gain = 1.0f;
     uint32_t age = 0;
+
+    Engine& engineFor() {
+      switch (engine) {
+        case EngineId::ZxPhase: return phase;
+        case EngineId::Sample:  return sample;
+        case EngineId::Cloud:   return cloud;
+        default:                return pulse;
+      }
+    }
   };
 
   void noteOn(uint8_t tag, uint8_t vel, float note) {
@@ -106,6 +134,7 @@ class Instrument {
     v->tag = tag;
     v->gated = true;
     v->trigger = true;
+    if (v->engine != engine_ || !v->env.active()) v->env.setTimes(2.0f, releaseMs(engine_), kBlock);
     v->engine = engine_;
     v->gain = 0.35f + 0.65f * (float)vel / 127.0f;
     v->age = ++clock_;

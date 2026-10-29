@@ -27,7 +27,7 @@ const uint8_t kCodecInit[][2] = {
   {0x0E, 0x02},  // analog PGA + ADC modulator on
   {0x12, 0x00},  // DAC power up
   {0x13, 0x10},  // HP drive on (feeds the speaker amp)
-  {0x14, 0x10},  // ADC input Mic1p-Mic1n, PGA minimum
+  {0x14, 0x14},  // ADC input Mic1p-Mic1n, PGA +12 dB (a clap peaks ~0.6 FS)
   {0x17, 0xBF},  // ADC volume 0 dB
   {0x1C, 0x6A},  // ADC EQ bypass, digital DC cancel
   {0x32, 0xBF},  // DAC volume 0 dB
