@@ -351,6 +351,9 @@ static void recordSample() {
 
 void setup() {
   cardputer::begin();
+#ifndef SYNTH_USB_MIDI
+  Serial.begin(115200);   // M5Unified leaves Serial unstarted; the 'B' bench reads it
+#endif
 #ifdef SYNTH_USB_MIDI
   usbMidiTransport.setStringDescriptor("Cardputer Synth");
   usbMidi.begin(MIDI_CHANNEL_OMNI);
