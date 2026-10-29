@@ -166,6 +166,12 @@ void nudgeParam(pd::Param p, float d) {
   g_ui.dirty = true;
 }
 
+void setTempo(float bpm) {
+  g_ui.bpm = pd::clamp(bpm, 40.0f, 300.0f);
+  send(pd::EventType::Tempo, 0, 0, g_ui.bpm);
+  g_ui.dirty = true;
+}
+
 void setDac(int reg) {
   g_ui.dacVol = pd::clamp(reg, 0, kDacMax);
   pd::audio::setDacVolume((uint8_t)g_ui.dacVol);
@@ -465,7 +471,7 @@ void applyPatch(const pd::patch::Patch& p) {
     if (!strcmp(p.surface, pd::surface::kSurfaces[i].name)) g_ui.surface = i;
   g_ui.octave = pd::clamp(p.octave, 0, 7);
   g_ui.root = pd::clamp(p.root, 0.0f, 11.999f);
-  g_ui.bpm = pd::clamp(p.bpm, 40.0f, 300.0f);
+  setTempo(p.bpm);
   for (int i = 0; i < 4; ++i) g_ui.params[i] = pd::clamp(p.params[i], 0.0f, 1.0f);
   send(pd::EventType::Engine, (uint8_t)g_ui.engine);
   pushParams();
@@ -530,8 +536,8 @@ uint32_t fnAction(char label) {
     case ']': setDac(g_ui.dacVol + 6); return 150;
     case 'q': nudgeRoot(-1); return 150;
     case 'w': nudgeRoot(+1); return 150;
-    case '9': g_ui.bpm = pd::clamp(g_ui.bpm - 2.0f, 40.0f, 300.0f); g_ui.dirty = true; return 60;
-    case '0': g_ui.bpm = pd::clamp(g_ui.bpm + 2.0f, 40.0f, 300.0f); g_ui.dirty = true; return 60;
+    case '9': setTempo(g_ui.bpm - 2.0f); return 60;
+    case '0': setTempo(g_ui.bpm + 2.0f); return 60;
     case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 7); g_ui.dirty = true; return 0;
     case '1': g_ui.octave = pd::clamp(g_ui.octave + 1, 0, 7); g_ui.dirty = true; return 0;
     case '>':   // TAB
@@ -847,6 +853,7 @@ void setup() {
   g_ui.seed = pd::rng::hash32(micros());
   g_ui.arpGaps.Init(g_ui.seed | 1u);
   pushParams();
+  setTempo(g_ui.bpm);
   xTaskCreatePinnedToCore(controlTask, "pd_ctrl", 8192, nullptr, 2, nullptr, 0);
 }
 

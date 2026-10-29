@@ -86,10 +86,14 @@ Their bars turn green. Switching tilt off returns them to their set values.
 | **BROCOT FM**: parallel true FM on Stern-Brocot ratios | trunk: harmonic → Avatar → Golden convergents | FM index (key-scaled) | DX feedback ← sine → Fritz double pulse | strike (CW) / swell (CCW) |
 | **SAMPLE**: the take as a varispeed record | slice / start | length | forward, loop, ping-pong, reverse | tape-dull (CCW) / SP grit (CW) |
 | **CLOUD**: the take as a granular cloud | position | grain size | timing: CHIP, SILK, MOTIF, LOOSE, CLUMP | density |
+| **BREAK**: the take as a one-bar break, cut up live by Audiothurgist's chop grammar at the tempo | chop: verbatim → DJ edit → chops → rolls → micro bursts | pattern (32 seeds) | gate length | tape-dull / SP grit |
 
 **The take:** FN+R records from the mic at 24 kHz (SP-1200 territory). It is
 trimmed, normalized and sliced at onsets. Recording switches the engine to
-SAMPLE if you weren't on SAMPLE or CLOUD. C4 plays the take as recorded.
+SAMPLE if you weren't on SAMPLE, CLOUD or BREAK. C4 plays the take as
+recorded. BREAK plays it at the tempo, so tempo is pitch (the turntable way),
+and the key adds its own pitch on top. Every re-strike restarts the bar, so
+RATCHET stutters the break.
 
 ## The looper
 

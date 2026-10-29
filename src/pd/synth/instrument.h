@@ -3,8 +3,10 @@
 // host tests drive the same object.
 #pragma once
 #include "../dsp/envelope.h"
+#include "../engines/break.h"
 #include "../engines/brocot_fm.h"
 #include "../engines/cloud.h"
+#include "../engines/modal.h"
 #include "../engines/sampler.h"
 #include "../engines/zx_phase.h"
 #include "../engines/zx_pulse.h"
@@ -12,29 +14,33 @@
 
 namespace pd {
 
-enum class EngineId : uint8_t { ZxPulse, ZxPhase, BrocotFm, Sample, Cloud, Count };
+enum class EngineId : uint8_t { ZxPulse, ZxPhase, BrocotFm, Modal, Sample, Cloud, Break, Count };
 
 inline const char* engineName(EngineId e) {
   switch (e) {
     case EngineId::ZxPulse: return "ZX PULSE";
     case EngineId::ZxPhase: return "ZX PHASE";
     case EngineId::BrocotFm: return "BROCOT FM";
+    case EngineId::Modal:   return "MODAL";
     case EngineId::Sample:  return "SAMPLE";
     case EngineId::Cloud:   return "CLOUD";
+    case EngineId::Break:   return "BREAK";
     default: return "?";
   }
 }
 
 // Engines that play the recorded take (synth/sample_store.h).
-inline bool playsTake(EngineId e) { return e == EngineId::Sample || e == EngineId::Cloud; }
+inline bool playsTake(EngineId e) { return e == EngineId::Sample || e == EngineId::Cloud || e == EngineId::Break; }
 
 // Amp release after key-up, per engine: buzzers stop like buzzers, a stab
 // gates with the key, a cloud thins out.
 inline float releaseMs(EngineId e) {
   switch (e) {
     case EngineId::BrocotFm: return 350.0f;
+    case EngineId::Modal:  return ModalEngine::kReleaseMs;   // a struck bell rings out
     case EngineId::Sample: return 60.0f;
     case EngineId::Cloud:  return 500.0f;
+    case EngineId::Break:  return 80.0f;
     default:               return 250.0f;
   }
 }
@@ -64,6 +70,9 @@ class Instrument {
       case EventType::Engine:
         if (e.a < (uint8_t)EngineId::Count) engine_ = (EngineId)e.a;
         break;
+      case EventType::Tempo:
+        tempo_ = clamp(e.value, 20.0f, 400.0f);
+        break;
       case EventType::AllOff:
         for (auto& v : voices_) { v.gated = false; v.env.gateOff(); }
         break;
@@ -84,6 +93,7 @@ class Instrument {
       p.timbre = params_[(int)Param::Timbre];
       p.morph = params_[(int)Param::Morph];
       p.macro = params_[(int)Param::Macro];
+      p.tempo = tempo_;
       p.trigger = v.trigger ? kTriggerRising : 0;
       v.trigger = false;
       Engine& eng = v.engineFor();
@@ -110,8 +120,10 @@ class Instrument {
     ZxPulseEngine pulse;
     ZxPhaseEngine phase;
     BrocotFmEngine fm;
+    ModalEngine modal;
     SamplerEngine sample;
     CloudEngine cloud;
+    BreakEngine brk;
     Envelope env;
     EngineId engine = EngineId::ZxPulse;
     float note = 60.0f;
@@ -125,8 +137,10 @@ class Instrument {
       switch (engine) {
         case EngineId::ZxPhase: return phase;
         case EngineId::BrocotFm: return fm;
+        case EngineId::Modal:   return modal;
         case EngineId::Sample:  return sample;
         case EngineId::Cloud:   return cloud;
+        case EngineId::Break:   return brk;
         default:                return pulse;
       }
     }
@@ -143,6 +157,9 @@ class Instrument {
     v->gated = true;
     v->trigger = true;
     if (v->engine != engine_ || !v->env.active()) v->env.setTimes(2.0f, releaseMs(engine_), kBlock);
+    // A modal bank left ringing when its voice went idle would come back as
+    // a faint tail on the voice's next note: start it clean.
+    if (engine_ == EngineId::Modal && !v->env.active()) v->modal.reset();
     v->engine = engine_;
     v->gain = 0.35f + 0.65f * (float)vel / 127.0f;
     v->age = ++clock_;
@@ -163,6 +180,7 @@ class Instrument {
   float params_[(int)Param::Count];
   EngineId engine_ = EngineId::ZxPulse;
   float master_ = 1.0f;
+  float tempo_ = 120.0f;
   uint32_t clock_ = 0;
   int active_ = 0;
 };

@@ -13,6 +13,7 @@
 // out: the voice; aux: the same before MACRO's colouring.
 #pragma once
 #include "../dsp/core.h"
+#include "../dsp/lofi.h"
 #include "../synth/sample_store.h"
 
 namespace pd {
@@ -23,7 +24,7 @@ class SamplerEngine : public Engine {
 
   void reset() override {
     pos_ = 0; dir_ = 1; done_ = true;
-    comp_ = 0.0f; last_ = 0.0f; lp_ = 0.0f; held_ = 0.0f; holdCount_ = 0;
+    comp_ = 0.0f; last_ = 0.0f; lofi_.reset();
   }
 
   void render(const EngineParams& p, float* out, float* aux, size_t n) override {
@@ -59,7 +60,7 @@ class SamplerEngine : public Engine {
 
     constexpr float kFade = 0.003f * SampleStore::kRate;   // 3 ms of material
     const float fadeRecip = 1.0f / kFade;
-    const Colour c = colour(p.macro);
+    lofi_.set(p.macro);
 
     // The loop runs on locals; the region guarantees idx + 1 < length, so
     // samples are read raw and the take's gain is applied once at the end.
@@ -106,7 +107,7 @@ class SamplerEngine : public Engine {
       comp *= 0.93f;
       last = x;
       aux[i] = x * kLevel;
-      out[i] = shade(x, c) * kLevel;
+      out[i] = lofi_.process(x) * kLevel;
     }
     pos_ = pos; dir_ = step < 0 ? -1 : 1; done_ = done; comp_ = comp; last_ = last;
   }
@@ -115,36 +116,6 @@ class SamplerEngine : public Engine {
   // The take is normalized to 0.9 peak; sit it with the synth engines.
   static constexpr float kLevel = 0.6f;
 
-  struct Colour { float lpCoef; int hold; float crushQ; };   // crushQ: levels per unit
-
-  static Colour colour(float macro) {
-    Colour c = {1.0f, 1, 32768.0f};
-    if (macro < 0.49f) {
-      const float fc = 12000.0f * std::exp2(-(0.5f - macro) * 14.0f);   // 12 kHz .. ~94 Hz
-      c.lpCoef = 1.0f - std::exp(-kTwoPi * fc / kSampleRate);
-    } else if (macro > 0.51f) {
-      const float g = (macro - 0.5f) * 2.0f;
-      c.hold = 1 + (int)(g * 7.0f);                       // 48 kHz .. 6 kHz
-      c.crushQ = std::exp2(15.0f - 11.0f * g);            // 16 bits .. 5 bits
-    }
-    return c;
-  }
-
-  float shade(float x, const Colour& c) {
-    if (c.lpCoef < 1.0f) { lp_ += c.lpCoef * (x - lp_); return lp_; }
-    if (c.hold > 1) {
-      if (holdCount_ <= 0) {
-        const float q = x * c.crushQ;
-        held_ = (float)(int32_t)(q + (q >= 0.0f ? 0.5f : -0.5f)) / c.crushQ;
-        holdCount_ = c.hold;
-      }
-      --holdCount_;
-      return held_;
-    }
-    lp_ = x;
-    return x;
-  }
-
   // Move the read head, bridging the step with a decaying offset.
   void jump(const SampleStore& s, int64_t to) {
     const float next = s.read((uint32_t)(to >> 32), (float)(uint32_t)to * kPhaseToFloat);
@@ -152,15 +123,13 @@ class SamplerEngine : public Engine {
     pos_ = to;
   }
 
-  static constexpr float kTwoPi = 6.28318530717958647692f;
   static constexpr float kPhaseToFloat = 1.0f / 4294967296.0f;
 
   int64_t pos_ = 0;      // 32.32 fixed point, in take samples
   int dir_ = 1;
   bool done_ = true;
   float comp_ = 0.0f, last_ = 0.0f;
-  float lp_ = 0.0f, held_ = 0.0f;
-  int holdCount_ = 0;
+  Lofi lofi_;
 };
 
 }  // namespace pd

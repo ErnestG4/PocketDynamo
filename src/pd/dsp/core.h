@@ -33,6 +33,7 @@ struct EngineParams {
   float   timbre    = 0.5f;
   float   morph     = 0.5f;
   float   macro     = 0.5f;   // plaits-lab's fourth control; 0.5 = neutral
+  float   tempo     = 120.0f; // bpm, for engines that play on a grid
   uint8_t trigger   = 0;      // kTriggerRising on the block a note starts
 };
 
