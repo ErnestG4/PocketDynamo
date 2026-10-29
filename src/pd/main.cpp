@@ -3,7 +3,8 @@
 // now). The Arduino loop task is deleted so nothing else competes on core 1.
 //
 // Serial commands: t = test tone on/off, p = mic passthrough on/off (keep the
-// volume low: speaker and mic sit centimetres apart), +/- = tone pitch.
+// volume low: speaker and mic sit centimetres apart), +/- = tone pitch,
+// a = cycle tone amplitude, [ / ] = codec DAC volume down/up 3 dB.
 #include <Arduino.h>
 #include <M5Cardputer.h>
 
@@ -14,6 +15,7 @@ namespace {
 
 volatile bool     g_tone = false;
 volatile bool     g_pass = false;
+volatile float    g_toneAmp = 0.15f;
 volatile uint32_t g_toneInc = pd::phaseIncrement(440.0f, pd::audio::kSampleRate);
 
 // Mic meter, accumulated in the render, read + reset from core 0.
@@ -31,7 +33,7 @@ void render(const float* in, float* out, size_t n) {
     const float a = x < 0.0f ? -x : x;
     if (a > peak) peak = a;
     float y = 0.0f;
-    if (tone) { y += 0.15f * pd::sinePhase(phase); phase += inc; }
+    if (tone) { y += g_toneAmp * pd::sinePhase(phase); phase += inc; }
     if (pass) y += 0.5f * x;
     out[i] = y;
   }
@@ -43,11 +45,18 @@ void render(const float* in, float* out, size_t n) {
 void controlTask(void*) {
   uint32_t lastReport = millis();
   float toneHz = 440.0f;
+  int dacVol = 0xBF;   // 0 dB
   for (;;) {
     while (Serial.available()) {
       const int c = Serial.read();
       if (c == 't') g_tone = !g_tone;
       else if (c == 'p') g_pass = !g_pass;
+      else if (c == 'a') g_toneAmp = g_toneAmp < 0.2f ? 0.5f : (g_toneAmp < 0.6f ? 1.0f : 0.15f);
+      else if (c == '[' || c == ']') {
+        dacVol += (c == ']') ? 6 : -6;
+        dacVol = dacVol < 0 ? 0 : (dacVol > 0xFF ? 0xFF : dacVol);
+        pd::audio::setDacVolume((uint8_t)dacVol);
+      }
       else if (c == '+' || c == '-') {
         toneHz *= (c == '+') ? 1.0594631f : 1.0f / 1.0594631f;
         g_toneInc = pd::phaseIncrement(toneHz, pd::audio::kSampleRate);
@@ -60,12 +69,12 @@ void controlTask(void*) {
       const float rms = sqrtf(g_micSumSq / cnt), pk = g_micPeak;
       g_micSumSq = 0.0f; g_micCount = 0; g_micPeak = 0.0f;
       Serial.printf("pd blocks=%lu load=%lu.%lu%% peak=%lu.%lu%% late=%lu rxshort=%lu "
-                    "mic_rms=%.5f mic_peak=%.4f slot0=%.5f slot1=%.5f tone=%d pass=%d hz=%.1f\n",
+                    "mic_rms=%.5f mic_peak=%.4f tone=%d amp=%.2f dac_db=%+.1f pass=%d hz=%.1f\n",
                     (unsigned long)s.blocks,
                     (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
                     (unsigned long)(s.loadPeakPermil / 10), (unsigned long)(s.loadPeakPermil % 10),
                     (unsigned long)s.lateWrites, (unsigned long)s.rxShort,
-                    rms, pk, s.slotRms[0], s.slotRms[1], (int)g_tone, (int)g_pass, toneHz);
+                    rms, pk, (int)g_tone, g_toneAmp, (dacVol - 0xBF) * 0.5f, (int)g_pass, toneHz);
     }
     vTaskDelay(pdMS_TO_TICKS(5));
   }

@@ -25,6 +25,9 @@ struct Stats {
 };
 
 bool begin(RenderFn fn);
+// Codec DAC digital volume, 0.5 dB steps: 0xBF = 0 dB, 0xFF = +32 dB.
+// I2C write — call from the control side, never from the render.
+bool setDacVolume(uint8_t reg);
 // Snapshot + reset the averaging window. Call from the UI side.
 Stats takeStats();
 

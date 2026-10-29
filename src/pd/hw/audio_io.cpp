@@ -113,6 +113,10 @@ bool begin(RenderFn fn) {
                                  configMAX_PRIORITIES - 1, nullptr, 1) == pdPASS;
 }
 
+bool setDacVolume(uint8_t reg) {
+  return M5.In_I2C.writeRegister8(kCodecAddr, 0x32, reg, 400000);
+}
+
 Stats takeStats() {
   Stats s;
   const uint32_t n = g_windowBlocks ? g_windowBlocks : 1;
