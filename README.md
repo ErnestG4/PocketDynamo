@@ -1,4 +1,31 @@
-# cardputer-synth
+# PocketDynamo
+
+An old-school synthesis instrument for the **M5Stack Cardputer ADV** (ESP32-S3):
+8 voices, full-duplex audio at 48 kHz, and a keyboard laid out for playing
+rather than typing.
+
+- **Engines:** ZX PULSE (Follin pin trains), ZX PHASE (Phaser1 1-bit
+  interference), BROCOT FM (parallel true FM on Stern-Brocot ratios), SAMPLE
+  (the mic take as a varispeed record) and CLOUD (the take as an ARS-timed
+  granular cloud).
+- **Playing surfaces:** scale-locked layouts in fourths, chromatic, the tracker
+  piano, and three 49-EDO surfaces.
+- **Hold strips:** CHORD, RATCHET and ARP (including 50 Hz chip arps), each
+  latchable.
+- **Also:** a sustain pedal, tilt control of TIMBRE and MORPH, a dice key with
+  undo, an event looper with overdub, mic recording, and patches on SD.
+
+Build and flash: `pio run -e pd -t upload`. **How to play:**
+[docs/pocketdynamo.md](docs/pocketdynamo.md). Credits and licences:
+[NOTICE.md](NOTICE.md).
+
+PocketDynamo forks [cardputer-synth](https://github.com/chongjiazhen/cardputer-synth).
+Its original firmware is still here under `src/synth` (`pio run -e synth`) and
+is described below.
+
+---
+
+# cardputer-synth (original firmware, `src/synth`)
 
 A polyphonic synthesizer firmware for the **M5Stack Cardputer ADV** (ESP32-S3).
 Six-voice subtractive engine with a resonant filter, modulation matrix, a mic
