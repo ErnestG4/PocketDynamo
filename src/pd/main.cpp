@@ -20,7 +20,8 @@
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
 // q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
-// take, up to 3.3 s), 2..8 load a patch from SD, SHIFT+2..8 save one. Holding a param, volume, root or tempo combo repeats.
+// take, up to 3.3 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
+// L looper record -> play <-> overdub (synth/looper.h), K stop / clear. Holding a param, volume, root or tempo combo repeats.
 // Serial: [ / ] volume, i = print state, B = silent CPU bench, S = SD status, K<row><col
 // hex><+|-> = press/release a key (for scripted tests).
 #include <Arduino.h>
@@ -36,6 +37,7 @@
 #include "synth/dice.h"
 #include "synth/events.h"
 #include "synth/instrument.h"
+#include "synth/looper.h"
 #include "ui/arp.h"
 #include "ui/keymap.h"
 #include "ui/surface.h"
@@ -48,6 +50,7 @@ using Synth = pd::Instrument<kVoices, pd::audio::kBlock>;
 
 Synth g_synth;
 pd::SpscQueue<128> g_events;
+pd::Looper g_looper;
 
 void render(const float* in, float* out, size_t n) {
   pd::sampleStore().record(in, n);   // no-op unless a take is running
@@ -132,8 +135,13 @@ Ui g_ui;
 const pd::surface::Surface& surf() { return pd::surface::kSurfaces[g_ui.surface]; }
 
 void send(pd::EventType t, uint8_t a, uint8_t b = 0, float v = 0.0f) {
-  g_events.push(pd::Event{t, a, b, v});
+  const pd::Event e{t, a, b, v};
+  g_events.push(e);
+  g_looper.capture(micros(), e);   // records only while the looper is recording
 }
+
+// Looper replays go straight to the synth (not back into the looper).
+void emitLooped(const pd::Event& e) { g_events.push(e); }
 
 void flash(const char* m) { g_ui.msg = m; g_ui.msgUntil = millis() + 1500; g_ui.dirty = true; }
 
@@ -486,6 +494,23 @@ void patchSlot(int slot) {
   flash(msg);
 }
 
+// --- looper: FN+L record -> play <-> overdub, FN+K stop, then clear ---
+
+void looperPress() {
+  uint8_t held[kKeys + 1];
+  int n = 0;
+  for (int k = 0; k < kKeys; ++k) if (g_ui.sounding[k]) held[n++] = keyTag(k);
+  if (g_ui.arpOn) held[n++] = kArpTag;
+  const uint32_t beatUs = (uint32_t)(60e6f / g_ui.bpm);
+  g_looper.press(micros(), beatUs, held, n, emitLooped);
+  g_ui.dirty = true;
+}
+
+void looperStop() {
+  g_looper.stop(emitLooped);
+  flash(g_looper.state() == pd::Looper::Empty ? "LOOP CLEARED" : "LOOP STOPPED");
+}
+
 // --- key dispatch ---
 
 // One step of an FN combo. Returns the auto-repeat interval in ms, or 0 for
@@ -559,6 +584,8 @@ void onKey(int r, int c, bool pressed) {
   if (g_ui.fn) {
     const char label = pd::keymap::kLabel[r][c];
     if (label == 'r') { startRecording(k); return; }
+    if (label == 'l') { looperPress(); return; }
+    if (label == 'k') { looperStop(); return; }
     if (label == '^') { g_ui.saveArm = true; flash("SAVE: PICK 2..8"); return; }
     if (label >= '2' && label <= '8') { patchSlot(label - '0'); return; }
     const uint32_t interval = fnAction(label);
@@ -687,6 +714,15 @@ void draw(const pd::audio::Stats& s) {
   if (g_ui.msg && (int32_t)(millis() - g_ui.msgUntil) < 0) {
     d.setTextColor(TFT_YELLOW, TFT_BLACK);
     d.print(g_ui.msg);
+  } else if (g_looper.state() != pd::Looper::Empty) {
+    const uint32_t now = micros();
+    const auto st = g_looper.state();
+    d.setTextColor(st == pd::Looper::Recording || st == pd::Looper::Overdub ? TFT_RED : TFT_GREEN, TFT_BLACK);
+    if (st == pd::Looper::Recording) d.printf("LOOP REC %.1fs", g_looper.elapsed(now) * 1e-6f);
+    else d.printf("LOOP %s %.1fs  %d ev", st == pd::Looper::Overdub ? "OVERDUB" : st == pd::Looper::Stopped ? "STOPPED" : "PLAY",
+                  g_looper.lapUs() * 1e-6f, g_looper.events());
+    if (st == pd::Looper::Playing || st == pd::Looper::Overdub)
+      d.fillRect(4, 133, (int)(232 * g_looper.position(now)), 2, TFT_GREEN);
   } else {
     d.setTextColor(TFT_DARKGREY, TFT_BLACK);
     d.print("`dice TAB surf BS strip \\eng CTRL tilt SPC sus");
@@ -760,6 +796,8 @@ void controlTask(void*) {
     serviceDice(now);
     serviceRatchet();
     serviceArp();
+    g_looper.service(micros(), emitLooped);
+    if (g_looper.state() != pd::Looper::Empty && g_looper.state() != pd::Looper::Stopped) g_ui.dirty = true;
     serviceRecording();
     if (now - lastTilt >= 10) { lastTilt = now; serviceTilt(); }
     while (Serial.available()) {
