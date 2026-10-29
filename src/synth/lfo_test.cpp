@@ -49,13 +49,14 @@ int main() {
     lfo.shape = LfoShape::Square;
     lfo.depth = 1.0;
 
-    // First half should be +1, second half -1
+    // First half should be +1, second half -1. Sample mid-half (3/4 period),
+    // not the flip sample itself, which sits on the rounding boundary.
     double first = lfo.step();
     check(near(first, 1.0, 0.01), "Square LFO starts at +1");
     lfo.reset();
-    for (int i = 0; i < (int)(SR / 2); i++) lfo.step();
+    for (int i = 0; i < (int)(SR * 3 / 4); i++) lfo.step();
     double second = lfo.step();
-    check(near(second, -1.0, 0.01), "Square LFO goes to -1 at half period");
+    check(near(second, -1.0, 0.01), "Square LFO is -1 in the second half");
   }
 
   // --- Test 4: Saw LFO ramp ---
@@ -111,7 +112,8 @@ int main() {
     lfo.setFreq(20.0, SR);
     double inc20 = lfo.phaseInc;
 
-    check(near(inc20, 2.0 * inc10, 1e-6), "20Hz has 2x phase increment of 10Hz");
+    // Increments are rounded 2^32 cycle counts: allow one count of rounding.
+    check(near(inc20, 2.0 * inc10, 1.0), "20Hz has 2x phase increment of 10Hz");
   }
 
   puts("ok");

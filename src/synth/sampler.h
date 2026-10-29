@@ -1,7 +1,8 @@
 // Sample playback math. Pure, no Arduino/M5 includes — host-testable.
 // Reads a recorded int16 buffer at a fractional position with linear
 // interpolation, returning a sample in -1..1. Hardware mic capture lives in
-// main.cpp; only the read/resample math is here.
+// main.cpp; only the read/resample math is here. float and no fmod: this runs
+// per sample per voice, and double is soft-float on the ESP32-S3.
 #pragma once
 #include <cstdint>
 #include <cmath>
@@ -10,23 +11,22 @@ namespace synth {
 
 // Linear-interpolated read of buf[pos], pos in [0, len). Wraps for positions at
 // or past the end so a held note loops the buffer seamlessly. len must be > 0.
-inline double sampleRead(const int16_t* buf, int len, double pos) {
-  if (len <= 0) return 0.0;
-  // Wrap pos into [0, len).
-  double p = std::fmod(pos, (double)len);
-  if (p < 0) p += len;
-  int   i0 = (int)p;
+inline float sampleRead(const int16_t* buf, int len, float pos) {
+  if (len <= 0) return 0.0f;
+  // Wrap pos into [0, len): split at the floor, then wrap the integer part.
+  int   i0 = (int)std::floor(pos);
+  float frac = pos - (float)i0;
+  i0 %= len; if (i0 < 0) i0 += len;
   int   i1 = i0 + 1; if (i1 >= len) i1 = 0;     // wrap the upper tap too
-  double frac = p - i0;
-  double a = buf[i0] / 32768.0;
-  double b = buf[i1] / 32768.0;
+  float a = buf[i0] * (1.0f / 32768.0f);
+  float b = buf[i1] * (1.0f / 32768.0f);
   return a + (b - a) * frac;
 }
 
 // Playback step (buffer samples advanced per output sample) for a MIDI note,
 // with C4 (60) = 1.0 (original speed/pitch). Each octave doubles the rate.
-inline double sampleStep(int midi) {
-  return std::pow(2.0, (midi - 60) / 12.0);
+inline float sampleStep(int midi) {
+  return std::exp2((midi - 60) / 12.0f);
 }
 
 // --- Granular pitch-shift ------------------------------------------------
@@ -74,8 +74,8 @@ struct Grain {
     // Grain read = anchor + (grain-local elapsed output samples) * pitch.
     float posA = anchorA + phase * (float)GRAIN_LEN * pitchRatio;
     float posB = anchorB + pB    * (float)GRAIN_LEN * pitchRatio;
-    float out  = hann(phase) * (float)sampleRead(buf, len, posA)
-               + hann(pB)    * (float)sampleRead(buf, len, posB);
+    float out  = hann(phase) * sampleRead(buf, len, posA)
+               + hann(pB)    * sampleRead(buf, len, posB);
 
     // Advance grain phase; re-anchor each grain the instant its window wraps.
     float prev = phase;

@@ -56,14 +56,14 @@ static constexpr int FILTER_DECIM = 16;
 // `bendRatio` and `vibRatio` are external pitch modifiers (IMU).
 inline float voiceSample(Voice& v, WaveShape wave,
                           float bendRatio, float vibRatio,
-                          double sampleRate) {
+                          float sampleRate) {
   if (!v.active) return 0.0f;
 
   // Step envelopes and LFOs
-  float e1 = (float)v.env1.step();
-  float e2 = (float)v.env2.step();
-  float l1 = (float)v.lfo1.step();
-  float l2 = (float)v.lfo2.step();
+  float e1 = v.env1.step();
+  float e2 = v.env2.step();
+  float l1 = v.lfo1.step();
+  float l2 = v.lfo2.step();
 
   // Build modulation source values
   float src[MOD_SRC_COUNT] = {};
@@ -89,14 +89,14 @@ inline float voiceSample(Voice& v, WaveShape wave,
     float cutoffMod = v.mod.get(ModDst::FilterCut) * 4000.0f;  // ±4000 Hz range
     float cutoff = v.baseCutoff + cutoffMod;
     if (cutoff < 20.0f) cutoff = 20.0f;
-    if (cutoff > sampleRate * 0.49) cutoff = sampleRate * 0.49f;
+    if (cutoff > sampleRate * 0.49f) cutoff = sampleRate * 0.49f;
 
     float resMod = v.mod.get(ModDst::FilterRes) * 5.0f;  // ±5 Q range
     float resonance = v.baseResonance + resMod;
     if (resonance < 0.1f) resonance = 0.1f;
     if (resonance > 20.0f) resonance = 20.0f;
 
-    v.filter.calcCoeffs(v.filterMode, cutoff, resonance, (float)sampleRate);
+    v.filter.calcCoeffs(v.filterMode, cutoff, resonance, sampleRate);
   }
 
   // Amp: env1 × velocity × mod offset
@@ -126,13 +126,13 @@ inline float voiceSample(Voice& v, WaveShape wave,
 // (pitch and speed coupled, tape-style).
 inline float voiceSampleBuf(Voice& v, const int16_t* buf, int len,
                              float bendRatio, float vibRatio,
-                             double sampleRate, bool grainMode = false) {
+                             float sampleRate, bool grainMode = false) {
   if (!v.active) return 0.0f;
 
-  float e1 = (float)v.env1.step();
-  float e2 = (float)v.env2.step();
-  float l1 = (float)v.lfo1.step();
-  float l2 = (float)v.lfo2.step();
+  float e1 = v.env1.step();
+  float e2 = v.env2.step();
+  float l1 = v.lfo1.step();
+  float l2 = v.lfo2.step();
 
   float src[MOD_SRC_COUNT] = {};
   src[(int)ModSrc::Env1]     = e1;
@@ -151,14 +151,14 @@ inline float voiceSampleBuf(Voice& v, const int16_t* buf, int len,
     float cutoffMod = v.mod.get(ModDst::FilterCut) * 4000.0f;
     float cutoff = v.baseCutoff + cutoffMod;
     if (cutoff < 20.0f) cutoff = 20.0f;
-    if (cutoff > sampleRate * 0.49) cutoff = sampleRate * 0.49f;
+    if (cutoff > sampleRate * 0.49f) cutoff = sampleRate * 0.49f;
 
     float resMod = v.mod.get(ModDst::FilterRes) * 5.0f;
     float resonance = v.baseResonance + resMod;
     if (resonance < 0.1f) resonance = 0.1f;
     if (resonance > 20.0f) resonance = 20.0f;
 
-    v.filter.calcCoeffs(v.filterMode, cutoff, resonance, (float)sampleRate);
+    v.filter.calcCoeffs(v.filterMode, cutoff, resonance, sampleRate);
   }
 
   float ampMod = 1.0f + v.mod.get(ModDst::Amp);
@@ -173,7 +173,7 @@ inline float voiceSampleBuf(Voice& v, const int16_t* buf, int len,
       rawSample = v.grain.process(buf, len, 1.0f, pitch);
     } else {
       // Varispeed (tape): one cursor, pitch and speed coupled.
-      rawSample = (float)sampleRead(buf, len, v.samplePos);
+      rawSample = sampleRead(buf, len, v.samplePos);
       v.samplePos += pitch;
       while (v.samplePos >= (float)len) v.samplePos -= (float)len;
       while (v.samplePos < 0.0f)        v.samplePos += (float)len;  // guard reverse/neg rate

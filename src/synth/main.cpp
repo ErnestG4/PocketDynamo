@@ -99,8 +99,8 @@ static synth::ImuCalib g_calib;
 static float  g_tiltFwd     = 0.0f;  // last calibrated fwd/back tilt (for latch)
 static float  g_vibratoDepth = 0.0f; // 0..1, accel side-tilt → LFO depth
 static double g_bendRatio    = 1.0;  // gyro gz → pitch-bend freq ratio
-static double g_lfoPhase     = 0.0;  // vibrato LFO phase (legacy IMU LFO)
-static double g_lfoInc       = 0.0;  // set in setup from LFO_HZ / SR
+static float  g_lfoPhase     = 0.0f; // vibrato LFO phase (legacy IMU LFO), float: per-sample
+static float  g_lfoInc       = 0.0f; // set in setup from LFO_HZ / SR
 
 // MIDI last-sent tracking — only transmit on change (prevents controller floods).
 // vibrato→CC1 (mod), pitch bend→14-bit (center 0). Velocity rides each note-on.
@@ -221,9 +221,9 @@ static void noteOnMidi(char key, int midi, uint8_t velocity) {
   v.mod.set(synth::ModSrc::Env2, synth::ModDst::FilterCut, 1.0f);
 
   // LFOs: default off (depth=0); can be configured per patch later
-  v.lfo1.setFreq(5.5, (double)SR);
+  v.lfo1.setFreq(5.5f, (float)SR);
   v.lfo1.depth = 0.0f;
-  v.lfo2.setFreq(0.5, (double)SR);
+  v.lfo2.setFreq(0.5f, (float)SR);
   v.lfo2.depth = 0.0f;
 
   g_lastVel  = v.vel;
@@ -265,20 +265,21 @@ static void renderChunk(bool play = true) {
       }
     }
   }
+  const float bend = (float)g_bendRatio;   // control-rate double → float once per block
   for (size_t i = 0; i < CHUNK; i++) {
-    float vibSemi  = g_vibratoDepth * synth::VIB_MAX_SEMITONES * sinf((float)g_lfoPhase);
+    float vibSemi  = g_vibratoDepth * synth::VIB_MAX_SEMITONES * sinf(g_lfoPhase);
     float vibRatio = 1.0f + vibSemi * 0.0577623f;
     float bus = 0.0f;
     bool  smpl = g_samplerMode && g_sampleLen > 0;
     for (int vch = 0; vch < N_VOICES; vch++)
       bus += smpl
         ? synth::voiceSampleBuf(g_voices[vch], g_sampleBuf, g_sampleLen,
-                                (float)g_bendRatio, vibRatio, (double)SR, g_samplerGrain)
+                                bend, vibRatio, (float)SR, g_samplerGrain)
         : synth::voiceSample(g_voices[vch], g_wave,
-                             (float)g_bendRatio, vibRatio, (double)SR);
+                             bend, vibRatio, (float)SR);
     g_buf[i] = synth::mixToInt16(bus, 1.0f, AMP);
     g_lfoPhase += g_lfoInc;
-    if (g_lfoPhase >= TWO_PI) g_lfoPhase -= TWO_PI;
+    if (g_lfoPhase >= synth::TWO_PI_F) g_lfoPhase -= synth::TWO_PI_F;
   }
   g_renderUs = micros() - t0;                          // render cost for CHUNK
   if (play) M5.Speaker.playRaw(g_buf, CHUNK, SR, false, 1, 0);   // channel 0, no repeat
@@ -381,7 +382,7 @@ void setup() {
     cardputer::Imu raw;
     if (cardputer::imuRead(raw)) g_calib = synth::calibrate(raw.ax, raw.ay, raw.gz);
   }
-  g_lfoInc = TWO_PI * synth::LFO_HZ / SR;   // vibrato LFO step per sample
+  g_lfoInc = synth::TWO_PI_F * synth::LFO_HZ / SR;   // vibrato LFO step per sample
   redraw("-");
 }
 
