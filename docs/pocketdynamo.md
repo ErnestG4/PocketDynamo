@@ -70,6 +70,7 @@ Their bars turn green. Switching tilt off returns them to their set values.
 | `q` / `w` | root down / up one step of the current tuning |
 | `9` / `0` | tempo |
 | `tab` | previous surface |
+| `\` | previous engine |
 | `del` | undo the last dice (again to redo) |
 | `r` (hold) | **record** from the mic into the take, up to 3.3 s |
 | `l` | **looper**: record → play → overdub → play… |

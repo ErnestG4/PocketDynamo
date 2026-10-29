@@ -19,6 +19,7 @@
 // past upright) directly (ui/tilt.h); switching off returns their set values.
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
 // q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
+// \ previous engine,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
 // take, up to 3.3 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
 // L looper record -> play <-> overdub (synth/looper.h), K stop / clear. Holding a param, volume, root or tempo combo repeats.
@@ -545,6 +546,11 @@ uint32_t fnAction(char label) {
       g_ui.dirty = true;
       return 0;
     case '<': undoDice(); return 0;   // BS
+    case '\\':                        // previous engine
+      g_ui.engine = (g_ui.engine + (int)pd::EngineId::Count - 1) % (int)pd::EngineId::Count;
+      send(pd::EventType::Engine, (uint8_t)g_ui.engine);
+      g_ui.dirty = true;
+      return 0;
     default: return 0;
   }
 }
