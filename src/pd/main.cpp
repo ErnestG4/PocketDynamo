@@ -20,8 +20,8 @@
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
 // q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
-// take, up to 3.3 s). Holding a param, volume, root or tempo combo repeats.
-// Serial: [ / ] volume, i = print state, B = silent CPU bench, K<row><col
+// take, up to 3.3 s), 2..8 load a patch from SD, SHIFT+2..8 save one. Holding a param, volume, root or tempo combo repeats.
+// Serial: [ / ] volume, i = print state, B = silent CPU bench, S = SD status, K<row><col
 // hex><+|-> = press/release a key (for scripted tests).
 #include <Arduino.h>
 #include <M5Cardputer.h>
@@ -29,8 +29,10 @@
 
 #include "dsp/ars.h"
 #include "dsp/rng.h"
+#include "dsp/tables.h"
 #include "hw/audio_io.h"
 #include "hw/keys.h"
+#include "hw/storage.h"
 #include "synth/dice.h"
 #include "synth/events.h"
 #include "synth/instrument.h"
@@ -115,6 +117,7 @@ struct Ui {
   bool  sustained[kKeys] = {};   // ...only because the pedal is down
   bool  physical[kKeys] = {};    // key is physically down (and played a note)
   uint32_t ratchetNext[kKeys] = {};   // micros of the next strike
+  bool  saveArm = false;       // FN+SHIFT held: digits save instead of load
   int   recKey = -1;           // key holding a recording, or -1
   uint32_t recStart = 0;
   uint32_t diceDown = 0;
@@ -434,6 +437,55 @@ void serviceRecording() {
   else g_ui.dirty = true;   // the timer runs on screen
 }
 
+// --- patches: FN+2..8 loads a slot from SD, FN+SHIFT+2..8 saves it ---
+
+pd::patch::Patch currentPatch() {
+  pd::patch::Patch p;
+  snprintf(p.engine, sizeof p.engine, "%s", pd::engineName((pd::EngineId)g_ui.engine));
+  snprintf(p.surface, sizeof p.surface, "%s", surf().name);
+  p.octave = g_ui.octave;
+  p.root = g_ui.root;
+  p.bpm = g_ui.bpm;
+  memcpy(p.params, g_ui.params, sizeof p.params);
+  return p;
+}
+
+void applyPatch(const pd::patch::Patch& p) {
+  for (int e = 0; e < (int)pd::EngineId::Count; ++e)
+    if (!strcmp(p.engine, pd::engineName((pd::EngineId)e))) g_ui.engine = e;
+  for (int i = 0; i < pd::surface::kNumSurfaces; ++i)
+    if (!strcmp(p.surface, pd::surface::kSurfaces[i].name)) g_ui.surface = i;
+  g_ui.octave = pd::clamp(p.octave, 0, 7);
+  g_ui.root = pd::clamp(p.root, 0.0f, 11.999f);
+  g_ui.bpm = pd::clamp(p.bpm, 40.0f, 300.0f);
+  for (int i = 0; i < 4; ++i) g_ui.params[i] = pd::clamp(p.params[i], 0.0f, 1.0f);
+  send(pd::EventType::Engine, (uint8_t)g_ui.engine);
+  pushParams();
+  g_ui.dirty = true;
+}
+
+void patchSlot(int slot) {
+  static char msg[32];
+  if (!pd::storage::mounted() && !pd::storage::begin()) { flash("NO SD CARD"); return; }
+  if (g_ui.saveArm) {
+    const bool ok = pd::storage::save(slot, currentPatch(), pd::sampleStore());
+    snprintf(msg, sizeof msg, ok ? "SAVED %d%s" : "SAVE %d FAILED", slot, pd::sampleStore().ready() ? " +TAKE" : "");
+    flash(msg);
+    return;
+  }
+  pd::patch::Patch p = currentPatch();
+  bool tookTake = false;
+  allOff();
+  if (!pd::storage::load(slot, &p, pd::sampleStore(), &tookTake)) {
+    snprintf(msg, sizeof msg, "SLOT %d EMPTY", slot);
+    flash(msg);
+    return;
+  }
+  applyPatch(p);
+  snprintf(msg, sizeof msg, "LOADED %d%s", slot, tookTake ? " +TAKE" : "");
+  flash(msg);
+}
+
 // --- key dispatch ---
 
 // One step of an FN combo. Returns the auto-repeat interval in ms, or 0 for
@@ -492,6 +544,7 @@ void onKey(int r, int c, bool pressed) {
   }
   if (r == 3 && c == 13) { setSustain(pressed); return; }   // SPACE
   if (!pressed) {
+    if (r == 2 && c == 1) g_ui.saveArm = false;   // SHIFT
     if (g_ui.repeat.label && g_ui.repeat.row == r && g_ui.repeat.col == c) g_ui.repeat.label = 0;
     if (k == g_ui.slotKey) releaseSlot();
     if (k == g_ui.recKey) stopRecording();
@@ -506,6 +559,8 @@ void onKey(int r, int c, bool pressed) {
   if (g_ui.fn) {
     const char label = pd::keymap::kLabel[r][c];
     if (label == 'r') { startRecording(k); return; }
+    if (label == '^') { g_ui.saveArm = true; flash("SAVE: PICK 2..8"); return; }
+    if (label >= '2' && label <= '8') { patchSlot(label - '0'); return; }
     const uint32_t interval = fnAction(label);
     auto& rp = g_ui.repeat;
     rp.label = interval ? label : 0;
@@ -654,17 +709,22 @@ void cpuBench() {
     for (int n = 0; n < kVoices; ++n)
       bench.handle({pd::EventType::NoteOn, (uint8_t)(n + 1), 100, 48.0f + 4 * n});
     float o[pd::audio::kBlock];
-    uint32_t sum = 0, peak = 0;
+    uint32_t sum = 0, peak = 0, over = 0, first = 0;
+    int peakAt = -1;
     for (int b = 0; b < kBlocks; ++b) {
       const uint32_t c0 = ESP.getCycleCount();
       bench.render(o);
       const uint32_t dc = ESP.getCycleCount() - c0;
-      sum += dc; if (dc > peak) peak = dc;
+      sum += dc;
+      if (dc > peak) { peak = dc; peakAt = b; }
+      if (dc > kCyclesPerBlock) ++over;
+      if (b == 0) first = dc;
     }
-    Serial.printf("bench engine=%s voices=%d avg=%.1f%% peak=%.1f%% of one core per block (%lu cycles avg)\n",
+    Serial.printf("bench engine=%s voices=%d avg=%.1f%% peak=%.1f%% (block %d) first=%.1f%% over100=%lu "
+                  "of one core per block (%lu cycles avg)\n",
                   pd::engineName((pd::EngineId)eng), bench.activeVoices(),
-                  100.0f * sum / kBlocks / kCyclesPerBlock, 100.0f * peak / kCyclesPerBlock,
-                  (unsigned long)(sum / kBlocks));
+                  100.0f * sum / kBlocks / kCyclesPerBlock, 100.0f * peak / kCyclesPerBlock, peakAt,
+                  100.0f * first / kCyclesPerBlock, (unsigned long)over, (unsigned long)(sum / kBlocks));
   }
   bench.handle({pd::EventType::AllOff, 0, 0, 0.0f});
 }
@@ -708,6 +768,7 @@ void controlTask(void*) {
       else if (c == ']') setDac(g_ui.dacVol + 6);
       else if (c == 'i') printState(stats);
       else if (c == 'B') cpuBench();
+      else if (c == 'S') { if (!pd::storage::mounted()) pd::storage::begin(); pd::storage::report(); }
       else if (c == 'K') {
         char b[3];
         if (Serial.readBytes(b, 3) == 3 && b[0] >= '0' && b[0] <= '3' && hexDigit(b[1]) >= 0)
@@ -738,11 +799,13 @@ void setup() {
   g_canvas.setColorDepth(16);
   const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
   const bool keysOk = pd::keys::begin();
+  pd::sineTable();   // build the shared table now, not inside the first FM note's block
   const bool audioOk = pd::audio::begin(render);
+  const bool sdOk = pd::storage::begin();
   if (audioOk) setDac(kDacDefault);
-  Serial.printf("pd begin: audio=%s keys=%s imu=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
-                keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", canvasOk ? "ok" : "FAIL",
-                (unsigned long)ESP.getFreeHeap());
+  Serial.printf("pd begin: audio=%s keys=%s imu=%s sd=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
+                keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", sdOk ? "ok" : "none",
+                canvasOk ? "ok" : "FAIL", (unsigned long)ESP.getFreeHeap());
   g_ui.seed = pd::rng::hash32(micros());
   g_ui.arpGaps.Init(g_ui.seed | 1u);
   pushParams();

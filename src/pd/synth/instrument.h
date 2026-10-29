@@ -3,6 +3,7 @@
 // host tests drive the same object.
 #pragma once
 #include "../dsp/envelope.h"
+#include "../engines/brocot_fm.h"
 #include "../engines/cloud.h"
 #include "../engines/sampler.h"
 #include "../engines/zx_phase.h"
@@ -11,12 +12,13 @@
 
 namespace pd {
 
-enum class EngineId : uint8_t { ZxPulse, ZxPhase, Sample, Cloud, Count };
+enum class EngineId : uint8_t { ZxPulse, ZxPhase, BrocotFm, Sample, Cloud, Count };
 
 inline const char* engineName(EngineId e) {
   switch (e) {
     case EngineId::ZxPulse: return "ZX PULSE";
     case EngineId::ZxPhase: return "ZX PHASE";
+    case EngineId::BrocotFm: return "BROCOT FM";
     case EngineId::Sample:  return "SAMPLE";
     case EngineId::Cloud:   return "CLOUD";
     default: return "?";
@@ -30,6 +32,7 @@ inline bool playsTake(EngineId e) { return e == EngineId::Sample || e == EngineI
 // gates with the key, a cloud thins out.
 inline float releaseMs(EngineId e) {
   switch (e) {
+    case EngineId::BrocotFm: return 350.0f;
     case EngineId::Sample: return 60.0f;
     case EngineId::Cloud:  return 500.0f;
     default:               return 250.0f;
@@ -106,6 +109,7 @@ class Instrument {
   struct Voice {
     ZxPulseEngine pulse;
     ZxPhaseEngine phase;
+    BrocotFmEngine fm;
     SamplerEngine sample;
     CloudEngine cloud;
     Envelope env;
@@ -120,6 +124,7 @@ class Instrument {
     Engine& engineFor() {
       switch (engine) {
         case EngineId::ZxPhase: return phase;
+        case EngineId::BrocotFm: return fm;
         case EngineId::Sample:  return sample;
         case EngineId::Cloud:   return cloud;
         default:                return pulse;

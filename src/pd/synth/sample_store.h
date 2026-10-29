@@ -44,6 +44,12 @@ class SampleStore {
   }
   void clear() { length_ = 0; slices_ = 0; state_.store(Empty, std::memory_order_release); }
 
+  // Load a take from elsewhere (SD): beginLoad() silences the readers and
+  // hands out the buffer (kCapacity samples at kRate); finishLoad(n) trims,
+  // normalizes and slices it like a recording.
+  int16_t* beginLoad() { state_.store(Analyzing, std::memory_order_release); return data_; }
+  bool finishLoad(uint32_t n) { length_ = std::min(n, kCapacity); return analyze(); }
+
   // --- audio side: append one block of the 48 kHz input, decimated 2:1 ---
   void record(const float* in, size_t n) {
     if (state_.load(std::memory_order_acquire) != Recording) return;
