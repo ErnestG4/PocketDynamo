@@ -2,6 +2,8 @@
 // sharing one set of controls. Pure C++ — the device render callback and the
 // host tests drive the same object.
 #pragma once
+#include <new>
+
 #include "../dsp/envelope.h"
 #include "../engines/break.h"
 #include "../engines/brocot_fm.h"
@@ -45,11 +47,26 @@ inline float releaseMs(EngineId e) {
   }
 }
 
+// Room for the largest engine: a voice holds only the one it plays.
+template <typename... Ts> struct EngineStore {
+  static constexpr size_t kSize = std::max({sizeof(Ts)...});
+  static constexpr size_t kAlign = std::max({alignof(Ts)...});
+};
+using AnyEngine = EngineStore<ZxPulseEngine, ZxPhaseEngine, BrocotFmEngine, ModalEngine,
+                              SamplerEngine, CloudEngine, BreakEngine>;
+
 template <int kVoices, size_t kBlock>
 class Instrument {
  public:
   Instrument() {
-    for (auto& v : voices_) v.env.setTimes(2.0f, releaseMs(EngineId::ZxPulse), kBlock);
+    // Shared tables are built here, never in the render task on a voice's
+    // first note of an engine.
+    (void)modal::tables();
+    (void)sineTable();
+    for (auto& v : voices_) {
+      v.build(EngineId::ZxPulse);
+      v.env.setTimes(2.0f, releaseMs(EngineId::ZxPulse), kBlock);
+    }
     for (int i = 0; i < (int)Param::Count; ++i) params_[i] = 0.5f;
     params_[(int)Param::Harmonics] = 0.0f;   // single pin per key: Follin poly
     params_[(int)Param::Morph] = 0.0f;
@@ -117,14 +134,12 @@ class Instrument {
   int activeVoices() const { return active_; }
 
  private:
+  // One engine per voice, built in place when the voice changes engine, so
+  // the pool costs the largest engine per voice rather than all seven. An
+  // engine keeps its state for as long as its voice keeps playing it.
   struct Voice {
-    ZxPulseEngine pulse;
-    ZxPhaseEngine phase;
-    BrocotFmEngine fm;
-    ModalEngine modal;
-    SamplerEngine sample;
-    CloudEngine cloud;
-    BreakEngine brk;
+    alignas(AnyEngine::kAlign) unsigned char store[AnyEngine::kSize];
+    Engine* eng = nullptr;
     Envelope env;
     EngineId engine = EngineId::ZxPulse;
     float note = 60.0f;
@@ -134,16 +149,24 @@ class Instrument {
     float gain = 1.0f;
     uint32_t age = 0;
 
-    Engine& engineFor() {
-      switch (engine) {
-        case EngineId::ZxPhase: return phase;
-        case EngineId::BrocotFm: return fm;
-        case EngineId::Modal:   return modal;
-        case EngineId::Sample:  return sample;
-        case EngineId::Cloud:   return cloud;
-        case EngineId::Break:   return brk;
-        default:                return pulse;
+    Voice() = default;
+    Voice(const Voice&) = delete;
+    Voice& operator=(const Voice&) = delete;
+    ~Voice() { if (eng) eng->~Engine(); }
+
+    Engine& engineFor() { return *eng; }
+    void build(EngineId id) {
+      if (eng) eng->~Engine();
+      switch (id) {
+        case EngineId::ZxPhase:  eng = new (store) ZxPhaseEngine(); break;
+        case EngineId::BrocotFm: eng = new (store) BrocotFmEngine(); break;
+        case EngineId::Modal:    eng = new (store) ModalEngine(); break;
+        case EngineId::Sample:   eng = new (store) SamplerEngine(); break;
+        case EngineId::Cloud:    eng = new (store) CloudEngine(); break;
+        case EngineId::Break:    eng = new (store) BreakEngine(); break;
+        default:                 eng = new (store) ZxPulseEngine(); id = EngineId::ZxPulse; break;
       }
+      engine = id;
     }
   };
 
@@ -158,10 +181,10 @@ class Instrument {
     v->gated = true;
     v->trigger = true;
     if (v->engine != engine_ || !v->env.active()) v->env.setTimes(2.0f, releaseMs(engine_), kBlock);
+    if (v->engine != engine_) v->build(engine_);
     // A modal bank left ringing when its voice went idle would come back as
     // a faint tail on the voice's next note: start it clean.
-    if (engine_ == EngineId::Modal && !v->env.active()) v->modal.reset();
-    v->engine = engine_;
+    else if (engine_ == EngineId::Modal && !v->env.active()) v->eng->reset();
     v->gain = 0.35f + 0.65f * (float)vel / 127.0f;
     v->age = ++clock_;
     v->env.gateOn();
