@@ -9,7 +9,8 @@ An 8-voice old-school synth for the **M5Stack Cardputer ADV**.
   - SAMPLE, CLOUD and BREAK (three ways to play a sound you record from the mic)
 - **A keyboard laid out for playing:** scale-locked layouts, a chromatic one, and 49-EDO tunings.
 - **Hold strips:** CHORD, RATCHET and ARP.
-- **Also:** USB MIDI in, tilt control, a looper, and patches saved to the SD card.
+- **MIDI in** over USB and Bluetooth LE: notes, the four controls, sustain, bend and clock.
+- **Also:** tilt control, a looper, and patches saved to the SD card.
 
 ## Install
 

@@ -53,6 +53,10 @@
 #include "ui/surface.h"
 #include "ui/tilt.h"
 
+#ifndef PD_VERSION
+#define PD_VERSION "dev"
+#endif
+
 namespace {
 
 constexpr int kVoices = 8;
@@ -1003,7 +1007,7 @@ void setup() {
   pd::usbmidi::begin();
   g_bleOk = pd::blemidi::begin();
   if (audioOk) setDac(kDacDefault);
-  Serial.printf("pd begin: audio=%s keys=%s imu=%s sd=%s ble=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
+  Serial.printf("pd " PD_VERSION " begin: audio=%s keys=%s imu=%s sd=%s ble=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
                 keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", sdOk ? "ok" : "none",
                 g_bleOk ? "ok" : "FAIL", canvasOk ? "ok" : "FAIL", (unsigned long)ESP.getFreeHeap());
   g_ui.seed = pd::rng::hash32(micros());

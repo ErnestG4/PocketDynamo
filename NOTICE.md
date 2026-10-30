@@ -28,7 +28,15 @@ These projects are by Combust. Code ported from them is AGPL-3.0:
 - **Chris Wellons:** the lowbias32 hash constants in `dsp/rng.h` (public domain).
 - **George Marsaglia:** xorshift32.
 - **M5Stack:** M5Unified, M5GFX and M5Cardputer (MIT). The keyboard key remap
-  in `hw/keys.cpp` follows M5Cardputer's TCA8418 driver.
+  in `hw/keys.cpp` follows M5Cardputer's TCA8418 driver. `variants/pocketdynamo`
+  is the Arduino-ESP32 (LGPL-2.1) `m5stack_stamp_s3` variant with its own USB
+  product ID.
+- **h2zero / NimBLE-Arduino (Apache-2.0)** and Apache Mynewt NimBLE: the
+  Bluetooth LE stack behind BLE MIDI, linked as a library.
+- **TinyUSB (MIT, Ha Thach), via Arduino-ESP32:** the USB device stack behind
+  USB MIDI.
+- **The BLE-MIDI and USB-MIDI specifications** (Apple / MIDI Association, USB-IF):
+  followed in `midi/midi.h`; no code copied.
 
 ## Techniques credited, no code copied
 

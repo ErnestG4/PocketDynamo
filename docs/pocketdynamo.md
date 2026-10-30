@@ -113,7 +113,7 @@ Their bars turn green. Switching tilt off returns them to their set values.
 
 ## The take (FN+`r`)
 
-Hold FN+`r` to record from the mic, for up to 3.3 s at 24 kHz (SP-1200
+Hold FN+`r` to record from the mic, for up to 3.3 s at 24 kHz and 12 bits (SP-1200
 territory). Sound stops while you record, so the speaker isn't recorded.
 - The take is trimmed, normalized and sliced at its onsets. The bottom line
   then shows its length and slice count.
@@ -143,11 +143,18 @@ plus the take. It doesn't save the strip, tilt or volume.
 - Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, resampled to
   24 kHz.
 
-## MIDI (USB)
+## MIDI (USB and Bluetooth)
 
-Plug PocketDynamo into a computer, phone or tablet and it shows up as a
-USB-MIDI device called **PocketDynamo** (beside its serial port). It listens
-on every channel.
+PocketDynamo listens for MIDI two ways, both at once, on every channel:
+
+- **USB:** plug it into a computer, phone or tablet and it shows up as a
+  USB-MIDI device called **PocketDynamo** (beside its serial port).
+- **Bluetooth LE:** it advertises as **PocketDynamo** whenever it's on.
+  Connect from a BLE-MIDI app or your system's Bluetooth MIDI settings (on
+  macOS, Audio MIDI Setup → MIDI Studio → Bluetooth; on iOS, from the app).
+  **BT** in the top right is grey while it waits and cyan once connected.
+  Bluetooth MIDI clock keeps its tempo: messages are placed by the sender's
+  own timestamps, not by when the radio delivers them.
 
 - **Notes** play as if they were keys, so they take the strip you're holding:
   CHORD, RATCHET and ARP all work on MIDI notes, and so do sustain and the
@@ -164,7 +171,7 @@ on every channel.
 - **MIDI clock** sets the tempo, so the arp, ratchets, BREAK and the looper
   follow your DAW.
 
-`MIDI` lights in the top right while messages come in.
+`MIDI` lights in the top right while messages come in, from either.
 
 ## The screen
 
