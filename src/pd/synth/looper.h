@@ -19,7 +19,7 @@ namespace pd {
 class Looper {
  public:
   static constexpr int kMaxEvents = 1024;
-  static constexpr uint8_t kLoopTagOffset = 64;
+  static constexpr uint8_t kLoopTagOffset = 128;   // live tags are 1..127
   enum State : uint8_t { Empty, Recording, Playing, Overdub, Stopped };
 
   State state() const { return state_; }
@@ -74,7 +74,11 @@ class Looper {
   void stop(Emit emit) {
     if (state_ == Stopped || state_ == Recording) { state_ = Empty; count_ = playable_ = 0; lap_ = 0; return; }
     if (state_ == Empty) return;
-    for (int t = 1; t < 128 - kLoopTagOffset; ++t) emit(Event{EventType::NoteOff, (uint8_t)(t + kLoopTagOffset), 0, 0.0f});
+    // Only the loop tags left sounding: a burst of 127 would overrun the
+    // synth's event queue.
+    for (int t = 0; t < 128; ++t)
+      if (sounding_[t >> 5] & (1u << (t & 31))) emit(Event{EventType::NoteOff, (uint8_t)(t + kLoopTagOffset), 0, 0.0f});
+    for (auto& w : sounding_) w = 0;
     state_ = Stopped;
   }
 
@@ -115,6 +119,11 @@ class Looper {
       if ((int32_t)(now - (lapStart_ + at_[cursor_])) < 0) return;
       Event e = ev_[cursor_++];
       if (isNote(e.type) && e.a < kLoopTagOffset) e.a = (uint8_t)(e.a + kLoopTagOffset);
+      if (e.a >= kLoopTagOffset) {
+        const int t = e.a - kLoopTagOffset;
+        if (e.type == EventType::NoteOn) sounding_[t >> 5] |= 1u << (t & 31);
+        else if (e.type == EventType::NoteOff) sounding_[t >> 5] &= ~(1u << (t & 31));
+      }
       emit(e);
     }
   }
@@ -136,6 +145,7 @@ class Looper {
     }
   }
 
+  uint32_t sounding_[4] = {};   // loop tags with a replayed NoteOn not yet released
   uint32_t at_[kMaxEvents];
   Event ev_[kMaxEvents];
   int count_ = 0;

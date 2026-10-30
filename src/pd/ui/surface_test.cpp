@@ -82,5 +82,16 @@ int main() {
     for (float v : z) check(v >= 0.0f && v <= 1.0f, "mutate stays in range");
   }
   printf("dice ok\n");
+
+  // degreeOf inverts degreeSemitones on every surface, and finds nothing
+  // between the keys.
+  for (const auto& s : kSurfaces)
+    for (int d = -20; d <= 40; ++d) check(degreeOf(s, degreeSemitones(s, d)) == d, "degreeOf round-trips");
+  check(degreeOf(byName("MAJOR 4THS"), 1.0f) == kNoDegree, "C# is off C major");
+  check(degreeOf(byName("MAJOR 4THS"), -1.0f) == -1, "B below the root is degree -1");
+  check(degreeOf(byName("PENTA 4THS"), 15.0f) == 6, "Eb an octave up in minor pentatonic");
+  check(degreeOf(byName("49 SUPERPYTH"), 7.0f) == kNoDegree, "a 12-EDO fifth is off the 49 grid");
+  check(degreeOf(byName("CHROMA 4THS"), 13.0f) == 13, "chromatic: every semitone");
+  printf("degreeOf ok\n");
   return 0;
 }

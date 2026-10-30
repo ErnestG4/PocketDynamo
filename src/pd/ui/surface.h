@@ -68,6 +68,21 @@ inline float degreeSemitones(const Surface& s, int d) {
   return (float)step * (12.0f / (float)s.divisions);
 }
 
+// The degree that plays `semitones` above the root, or kNoDegree when no
+// key of the surface lands on it (a MIDI note off the scale, or off a
+// 49-EDO grid).
+inline int degreeOf(const Surface& s, float semitones) {
+  const float steps = semitones * (float)s.divisions / 12.0f;
+  const int step = (int)std::lround(steps);
+  if (std::fabs(steps - (float)step) > 0.01f) return kNoDegree;
+  const int oct = step >= 0 ? step / s.divisions : -((-step + s.divisions - 1) / s.divisions);
+  const int inOct = step - oct * s.divisions;
+  if (chromatic(s)) return step;
+  for (int i = 0; i < s.len; ++i)
+    if (s.steps[i] == inOct) return oct * s.len + i;
+  return kNoDegree;
+}
+
 // --- chords: hold a strip key, play a key, get the chord on that key ---------
 
 constexpr int kNumChords = 12;

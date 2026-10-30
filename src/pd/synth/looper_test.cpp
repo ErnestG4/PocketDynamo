@@ -65,7 +65,7 @@ int main() {
   // Stop releases every loop tag; stop again clears.
   log.got.clear();
   l.stop(emit);
-  check(l.state() == Looper::Stopped && log.got.size() == 63, "stop releases loop tags");
+  check(l.state() == Looper::Stopped && log.got.size() <= 2, "stop releases only sounding loop tags");
   for (auto& g : log.got) check(g.second.type == EventType::NoteOff && g.second.a >= Looper::kLoopTagOffset, "only NoteOffs");
   l.stop(emit);
   check(l.state() == Looper::Empty && l.events() == 0, "second stop clears");
@@ -79,6 +79,12 @@ int main() {
   h.press(480000, kBeat, held, 1, emit);
   for (uint32_t t = 480000; t < 1100000; t += 1000) { log.now = t; h.service(t, emit); }
   check(log.got.size() == 2 && log.got[1].second.type == EventType::NoteOff, "held note closes at the lap end");
+  // Stopped mid-note, the looper releases exactly the loop tag still sounding.
+  for (uint32_t t = 1100000; t < 1200000; t += 1000) { log.now = t; h.service(t, emit); }
+  log.got.clear();
+  h.stop(emit);
+  check(log.got.size() == 1 && log.got[0].second.type == EventType::NoteOff &&
+        log.got[0].second.a == 3 + Looper::kLoopTagOffset, "stop releases the sounding loop tag");
 
   // Closing late skips what was just heard live (no double at the close).
   Looper late;

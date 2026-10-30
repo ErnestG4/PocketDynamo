@@ -23,8 +23,13 @@
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
 // take, up to 3.3 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
 // L looper record -> play <-> overdub (synth/looper.h), K stop / clear. Holding a param, volume, root or tempo combo repeats.
+// MIDI in over USB (hw/usb_midi, midi/midi.h): notes play as virtual keys,
+// so strips, sustain and the looper treat them like keys; CC 64 sustain,
+// CC 16-19 (and 71/74/1/2) the four controls, pitch bend +-2, program
+// change picks the engine, MIDI clock sets the tempo.
 // Serial: [ / ] volume, i = print state, B = silent CPU bench, S = SD status, K<row><col
-// hex><+|-> = press/release a key (for scripted tests).
+// hex><+|-> = press/release a key, M<hex>. = raw MIDI bytes (for scripted
+// tests), U = reboot into the bootloader (USB-MIDI builds, to flash).
 #include <Arduino.h>
 #include <M5Cardputer.h>
 #include <cstring>
@@ -35,6 +40,8 @@
 #include "hw/audio_io.h"
 #include "hw/keys.h"
 #include "hw/storage.h"
+#include "hw/usb_midi.h"
+#include "midi/midi.h"
 #include "synth/dice.h"
 #include "synth/events.h"
 #include "synth/instrument.h"
@@ -95,8 +102,12 @@ const char* stripName(Strip s) {
 
 constexpr int kRows = 4, kCols = 14, kKeys = kRows * kCols;
 constexpr int keyIndex(int r, int c) { return r * kCols + c; }
+// MIDI notes play through virtual keys after the physical ones, so they
+// take chords, ratchets, the arp, sustain and the looper exactly as keys do.
+constexpr int kMidiKeys = 16, kAllKeys = kKeys + kMidiKeys;
 constexpr uint8_t keyTag(int k) { return (uint8_t)(k + 1); }   // 0 = no tag
-constexpr uint8_t kArpTag = kKeys + 4;                           // the arp's one voice
+constexpr uint8_t kArpTag = kAllKeys + 4;                       // the arp's one voice
+static_assert(kArpTag < pd::Looper::kLoopTagOffset, "live tags must stay below the looper's");
 constexpr uint32_t kLatchTapMs = 300;                            // double-tap window
 
 struct Ui {
@@ -117,8 +128,8 @@ struct Ui {
   bool  latched = false;     // slot stays on after its key is let go
   int   lastSlot = -1;       // for double-tap latching
   uint32_t lastSlotMs = 0;
-  float pitch[kKeys] = {};       // the note each key plays (its chord root)
-  uint32_t pressSeq[kKeys] = {}; // press order, for the arp's ORDER pattern
+  float pitch[kAllKeys] = {};       // the note each key plays (its chord root)
+  uint32_t pressSeq[kAllKeys] = {}; // press order, for the arp's ORDER pattern
   uint32_t seq = 0;
   pd::arp::Arp arp;
   pd::ArsGapGenerator arpGaps;
@@ -126,10 +137,12 @@ struct Ui {
   bool  arpOn = false;       // the arp voice is gated
   float bpm = 120.0f;
   bool  fn = false, sustain = false, tilt = false;
-  bool  sounding[kKeys] = {};    // key has voices gated under its tag
-  bool  sustained[kKeys] = {};   // ...only because the pedal is down
-  bool  physical[kKeys] = {};    // key is physically down (and played a note)
-  uint32_t ratchetNext[kKeys] = {};   // micros of the next strike
+  bool  sounding[kAllKeys] = {};    // key has voices gated under its tag
+  bool  sustained[kAllKeys] = {};   // ...only because the pedal is down
+  bool  physical[kAllKeys] = {};    // key is physically down (and played a note)
+  uint32_t ratchetNext[kAllKeys] = {};   // micros of the next strike
+  int8_t midiNote[kMidiKeys] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+  uint32_t midiSeen = 0;       // millis of the last MIDI message, for the status light
   bool  saveArm = false;       // FN+SHIFT held: digits save instead of load
   int   recKey = -1;           // key holding a recording, or -1
   uint32_t recStart = 0;
@@ -272,7 +285,7 @@ bool ratcheting() { return g_ui.strip == Strip::Ratchet && g_ui.slot >= 0; }
 void serviceRatchet() {
   if (!ratcheting()) return;
   const uint32_t now = micros();
-  for (int k = 0; k < kKeys; ++k)
+  for (int k = 0; k < kAllKeys; ++k)
     if (g_ui.physical[k] && g_ui.sounding[k] && (int32_t)(now - g_ui.ratchetNext[k]) >= 0) {
       // Fell more than a period behind (a redraw, a bench): restart the grid.
       const bool late = (int32_t)(now - g_ui.ratchetNext[k]) > (int32_t)ratchetPeriodUs();
@@ -284,7 +297,7 @@ void serviceRatchet() {
 // Held notes go back to sustaining as normal notes.
 void endRatchet() {
   if (!ratcheting()) return;
-  for (int k = 0; k < kKeys; ++k)
+  for (int k = 0; k < kAllKeys; ++k)
     if (g_ui.physical[k] && g_ui.sounding[k]) send(pd::EventType::Retrigger, keyTag(k), 0, 0.0f);
 }
 
@@ -293,7 +306,7 @@ void endRatchet() {
 bool arping() { return g_ui.strip == Strip::Arp && g_ui.slot >= 0; }
 
 void startArp() {
-  for (int k = 0; k < kKeys; ++k)
+  for (int k = 0; k < kAllKeys; ++k)
     if (g_ui.sounding[k]) send(pd::EventType::NoteOff, keyTag(k));   // they become the pool
   g_ui.arp.restart();
   g_ui.arpGaps.Replay();
@@ -315,9 +328,9 @@ void serviceArp() {
   // Fell a whole step behind (a redraw, a bench): restart the grid.
   g_ui.arpNext = (int32_t)(now - g_ui.arpNext) > (int32_t)period ? now + (uint32_t)gap : g_ui.arpNext + (uint32_t)gap;
 
-  float pitches[kKeys];
-  int keys[kKeys], n = 0;
-  for (int k = 0; k < kKeys; ++k)   // pool in press order
+  float pitches[kAllKeys];
+  int keys[kAllKeys], n = 0;
+  for (int k = 0; k < kAllKeys; ++k)   // pool in press order
     if (g_ui.sounding[k]) {
       int j = n++;
       while (j > 0 && g_ui.pressSeq[keys[j - 1]] > g_ui.pressSeq[k]) { keys[j] = keys[j - 1]; --j; }
@@ -345,7 +358,7 @@ void endArp() {
   if (!arping()) return;
   if (g_ui.arpOn) send(pd::EventType::NoteOff, kArpTag);
   g_ui.arpOn = false;
-  for (int k = 0; k < kKeys; ++k)
+  for (int k = 0; k < kAllKeys; ++k)
     if (g_ui.sounding[k]) send(pd::EventType::NoteOn, keyTag(k), kVelocity, g_ui.pitch[k]);
 }
 
@@ -374,7 +387,7 @@ void pressSlot(int k, int slot) {
     g_ui.slot = slot;
     if (ratcheting()) {
       const uint32_t t = micros();
-      for (int j = 0; j < kKeys; ++j)
+      for (int j = 0; j < kAllKeys; ++j)
         if (g_ui.physical[j] && g_ui.sounding[j]) strike(j, t);
     }
     if (arping()) startArp();
@@ -384,24 +397,30 @@ void pressSlot(int k, int slot) {
   g_ui.dirty = true;
 }
 
-void playKey(int k, int degree) {
+bool chording() { return g_ui.strip == Strip::Chord && g_ui.slot >= 0; }
+float surfaceBase() { return 12.0f * (g_ui.octave + 1) + g_ui.root; }
+
+// Sound key k (physical or MIDI): pitches[0] is its note, the rest its chord.
+void startKey(int k, const float* pitches, int n, uint8_t vel) {
   const uint8_t tag = keyTag(k);
   if (g_ui.sounding[k]) send(pd::EventType::NoteOff, tag);   // re-struck while sustained
-  int offs[pd::surface::kMaxChordNotes] = {0};
-  int n = 1;
-  if (g_ui.strip == Strip::Chord && g_ui.slot >= 0) n = pd::surface::chordDegrees(surf(), g_ui.slot, offs);
-  const float base = 12.0f * (g_ui.octave + 1) + g_ui.root;
-  g_ui.pitch[k] = pd::clamp(base + pd::surface::degreeSemitones(surf(), degree), 0.0f, 127.0f);
+  g_ui.pitch[k] = pitches[0];
   g_ui.pressSeq[k] = ++g_ui.seq;
   if (!arping())   // under the arp a key joins the pool instead of sounding
-    for (int i = 0; i < n; ++i) {
-      const float pitch = base + pd::surface::degreeSemitones(surf(), degree + offs[i]);
-      send(pd::EventType::NoteOn, tag, kVelocity, pd::clamp(pitch, 0.0f, 127.0f));
-    }
+    for (int i = 0; i < n; ++i) send(pd::EventType::NoteOn, tag, vel, pitches[i]);
   g_ui.sounding[k] = true;
   g_ui.sustained[k] = false;
   g_ui.physical[k] = true;
   if (ratcheting()) strike(k, micros());
+}
+
+void playKey(int k, int degree, uint8_t vel = kVelocity) {
+  int offs[pd::surface::kMaxChordNotes] = {0};
+  const int n = chording() ? pd::surface::chordDegrees(surf(), g_ui.slot, offs) : 1;
+  float pitches[pd::surface::kMaxChordNotes];
+  for (int i = 0; i < n; ++i)
+    pitches[i] = pd::clamp(surfaceBase() + pd::surface::degreeSemitones(surf(), degree + offs[i]), 0.0f, 127.0f);
+  startKey(k, pitches, n, vel);
 }
 
 void releaseKey(int k) {
@@ -416,7 +435,7 @@ void setSustain(bool down) {
   g_ui.sustain = down;
   g_ui.dirty = true;
   if (down) return;
-  for (int k = 0; k < kKeys; ++k)
+  for (int k = 0; k < kAllKeys; ++k)
     if (g_ui.sustained[k]) {
       send(pd::EventType::NoteOff, keyTag(k));
       g_ui.sounding[k] = g_ui.sustained[k] = false;
@@ -426,7 +445,81 @@ void setSustain(bool down) {
 void allOff() {
   send(pd::EventType::AllOff, 0);
   g_ui.arpOn = false;
-  for (int k = 0; k < kKeys; ++k) g_ui.sounding[k] = g_ui.sustained[k] = false;
+  for (int k = 0; k < kAllKeys; ++k) g_ui.sounding[k] = g_ui.sustained[k] = false;
+}
+
+// --- MIDI in (midi/midi.h): notes are virtual keys ---
+
+// A MIDI note on the surface plays as that key would, so CHORD stacks stay
+// in the scale; one off it (off the scale, or off a 49-EDO grid) plays its
+// own pitch with the chord's chromatic shape, in plain cents.
+void midiNoteOn(int note, int vel) {
+  if (g_ui.recKey >= 0) return;   // the speaker would be in the take
+  int slot = -1;
+  for (int i = 0; i < kMidiKeys; ++i) if (g_ui.midiNote[i] == note) slot = i;   // re-struck
+  for (int i = 0; slot < 0 && i < kMidiKeys; ++i)
+    if (!g_ui.sounding[kKeys + i] && !g_ui.physical[kKeys + i]) slot = i;
+  if (slot < 0) {   // all busy: the oldest goes
+    slot = 0;
+    for (int i = 1; i < kMidiKeys; ++i)
+      if (g_ui.pressSeq[kKeys + i] < g_ui.pressSeq[kKeys + slot]) slot = i;
+  }
+  const int k = kKeys + slot;
+  g_ui.midiNote[slot] = (int8_t)note;
+  const int degree = pd::surface::degreeOf(surf(), (float)note - surfaceBase());
+  if (degree != pd::surface::kNoDegree) {
+    playKey(k, degree, (uint8_t)vel);
+  } else {
+    float pitches[pd::surface::kMaxChordNotes] = {(float)note};
+    int n = 1;
+    if (chording()) {
+      const auto& ch = pd::surface::kCentChords[g_ui.slot];
+      n = ch.n;
+      for (int i = 0; i < n; ++i) pitches[i] = pd::clamp(note + ch.v[i] * 0.01f, 0.0f, 127.0f);
+    }
+    startKey(k, pitches, n, (uint8_t)vel);
+  }
+}
+
+void midiNoteOff(int note) {
+  for (int i = 0; i < kMidiKeys; ++i)
+    if (g_ui.midiNote[i] == note && g_ui.physical[kKeys + i]) releaseKey(kKeys + i);
+}
+
+struct MidiHandler {
+  void noteOn(int n, int v) { midiNoteOn(n, v); }
+  void noteOff(int n) { midiNoteOff(n); }
+  void sustain(bool d) { if (d != g_ui.sustain) setSustain(d); }
+  void param(int p, float v) { g_ui.params[p] = v; pushParams(); }
+  void bend(float semis) { send(pd::EventType::Bend, 0, 0, semis); }
+  void program(int n) {
+    g_ui.engine = n % (int)pd::EngineId::Count;
+    send(pd::EventType::Engine, (uint8_t)g_ui.engine);
+    g_ui.dirty = true;
+  }
+  void allOff() { ::allOff(); }
+  void tempo(float bpm) { if (std::fabs(bpm - g_ui.bpm) >= 0.5f) setTempo(std::round(bpm)); }
+};
+
+pd::midi::In g_midiIn;
+pd::midi::Parser g_serialMidi;   // serial 'M' injection, for scripted tests
+
+void onMidi(const pd::midi::Msg& m, uint32_t atUs) {
+  MidiHandler h;
+  g_midiIn.handle(m, atUs, h);
+  if (m.status < 0xF8) {   // the clock alone doesn't light it
+    if (millis() - g_ui.midiSeen > 250) g_ui.dirty = true;
+    g_ui.midiSeen = millis();
+  }
+}
+
+void serviceMidi() {
+  pd::midi::Msg m;
+  uint32_t at;
+  for (int i = 0; i < 32 && pd::usbmidi::poll(&m, &at); ++i) onMidi(m, at);
+  static bool lit = false;
+  const bool on = millis() - g_ui.midiSeen < 250;
+  if (on != lit) { lit = on; g_ui.dirty = true; }
 }
 
 // --- recording: hold FN+R, the mic goes into the take ---
@@ -513,9 +606,9 @@ void patchSlot(int slot) {
 // --- looper: FN+L record -> play <-> overdub, FN+K stop, then clear ---
 
 void looperPress() {
-  uint8_t held[kKeys + 1];
+  uint8_t held[kAllKeys + 1];
   int n = 0;
-  for (int k = 0; k < kKeys; ++k) if (g_ui.sounding[k]) held[n++] = keyTag(k);
+  for (int k = 0; k < kAllKeys; ++k) if (g_ui.sounding[k]) held[n++] = keyTag(k);
   if (g_ui.arpOn) held[n++] = kArpTag;
   const uint32_t beatUs = (uint32_t)(60e6f / g_ui.bpm);
   g_looper.press(micros(), beatUs, held, n, emitLooped);
@@ -699,6 +792,11 @@ void draw(const pd::audio::Stats& s) {
   d.setTextColor(g_ui.tilt ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
   d.setCursor(88, 24);
   d.print("TILT");
+  if (pd::usbmidi::available()) {
+    d.setTextColor(millis() - g_ui.midiSeen < 250 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+    d.setCursor(170, 2);
+    d.print("MIDI");
+  }
   d.setCursor(122, 24);
   const auto& take = pd::sampleStore();
   if (g_ui.recKey >= 0) {
@@ -803,6 +901,7 @@ void printState(const pd::audio::Stats& s) {
 int hexDigit(int ch) {
   if (ch >= '0' && ch <= '9') return ch - '0';
   if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+  if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
   return -1;
 }
 
@@ -818,6 +917,7 @@ void controlTask(void*) {
     serviceRepeat(now);
     serviceDice(now);
     serviceRatchet();
+    serviceMidi();
     serviceArp();
     g_looper.service(micros(), emitLooped);
     if (g_looper.state() != pd::Looper::Empty && g_looper.state() != pd::Looper::Stopped) g_ui.dirty = true;
@@ -830,6 +930,21 @@ void controlTask(void*) {
       else if (c == 'i') printState(stats);
       else if (c == 'B') cpuBench();
       else if (c == 'S') { if (!pd::storage::mounted()) pd::storage::begin(); pd::storage::report(); }
+      else if (c == 'U') pd::usbmidi::rebootToBootloader();
+      else if (c == 'M') {   // M<hex bytes>. : raw MIDI, as if it came in over USB
+        int hi = -1;
+        for (uint32_t t0 = millis(); millis() - t0 < 200;) {
+          const int ch = Serial.read();
+          if (ch < 0) continue;
+          if (ch == '.') break;
+          const int d = hexDigit(ch);
+          if (d < 0) continue;
+          if (hi < 0) { hi = d; continue; }
+          pd::midi::Msg m;
+          if (g_serialMidi.feed((uint8_t)(hi << 4 | d), &m)) onMidi(m, micros());
+          hi = -1;
+        }
+      }
       else if (c == 'K') {
         char b[3];
         if (Serial.readBytes(b, 3) == 3 && b[0] >= '0' && b[0] <= '3' && hexDigit(b[1]) >= 0)
@@ -863,6 +978,7 @@ void setup() {
   pd::sineTable();   // build the shared table now, not inside the first FM note's block
   const bool audioOk = pd::audio::begin(render);
   const bool sdOk = pd::storage::begin();
+  pd::usbmidi::begin();
   if (audioOk) setDac(kDacDefault);
   Serial.printf("pd begin: audio=%s keys=%s imu=%s sd=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
                 keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", sdOk ? "ok" : "none",

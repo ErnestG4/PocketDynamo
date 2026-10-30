@@ -90,6 +90,9 @@ class Instrument {
       case EventType::Tempo:
         tempo_ = clamp(e.value, 20.0f, 400.0f);
         break;
+      case EventType::Bend:
+        bend_ = clamp(e.value, -24.0f, 24.0f);
+        break;
       case EventType::AllOff:
         for (auto& v : voices_) { v.gated = false; v.env.gateOff(); }
         break;
@@ -105,7 +108,7 @@ class Instrument {
       if (!v.env.active()) continue;
       ++active;
       EngineParams p;
-      p.note = v.note;
+      p.note = v.note + bend_;
       p.harmonics = params_[(int)Param::Harmonics];
       p.timbre = params_[(int)Param::Timbre];
       p.morph = params_[(int)Param::Morph];
@@ -205,6 +208,7 @@ class Instrument {
   EngineId engine_ = EngineId::ZxPulse;
   float master_ = 1.0f;
   float tempo_ = 120.0f;
+  float bend_ = 0.0f;
   uint32_t clock_ = 0;
   volatile int active_ = 0;
 };

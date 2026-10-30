@@ -143,6 +143,29 @@ plus the take. It doesn't save the strip, tilt or volume.
 - Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, resampled to
   24 kHz.
 
+## MIDI (USB)
+
+Plug PocketDynamo into a computer, phone or tablet and it shows up as a
+USB-MIDI device called **PocketDynamo** (beside its serial port). It listens
+on every channel.
+
+- **Notes** play as if they were keys, so they take the strip you're holding:
+  CHORD, RATCHET and ARP all work on MIDI notes, and so do sustain and the
+  looper. A note that's on the current surface plays exactly like that key,
+  so CHORD stacks stay in the scale; a note off it (off the scale, or off a
+  49-EDO grid) plays its own pitch with the chord's chromatic shape.
+- **Velocity** sets the level (the keys play at a fixed 100).
+- **CC 64** is the sustain pedal; **CC 120/123** all notes off.
+- **The four controls:** CC 16–19 are HARMONICS, TIMBRE, MORPH and MACRO.
+  The usual performance CCs land on them too: 71 (resonance) HARMONICS,
+  74 (brightness) TIMBRE, 1 (mod wheel) MORPH, 2 (breath) MACRO.
+- **Pitch bend** bends everything ±2 semitones.
+- **Program change** 0–6 picks the engine (in the `\` order).
+- **MIDI clock** sets the tempo, so the arp, ratchets, BREAK and the looper
+  follow your DAW.
+
+`MIDI` lights in the top right while messages come in.
+
 ## The screen
 
 - **Top:** the engine, the surface, then root/octave, tempo and volume.
@@ -162,3 +185,5 @@ plus the take. It doesn't save the strip, tilt or volume.
 | `S` | SD card status |
 | `[` / `]` | volume |
 | `K<row><col-hex><+/->` | press or release a key (row 0–3 from the top, column 0–d from the left) |
+| `M<hex bytes>.` | raw MIDI bytes, handled as if they came in over USB (`M90 3C 64.`) |
+| `U` | reboot into the bootloader, ready to flash |

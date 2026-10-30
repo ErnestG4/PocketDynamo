@@ -8,7 +8,7 @@
 
 namespace pd {
 
-enum class EventType : uint8_t { NoteOn, NoteOff, Retrigger, Pitch, Param, Engine, AllOff, Tempo };
+enum class EventType : uint8_t { NoteOn, NoteOff, Retrigger, Pitch, Param, Engine, AllOff, Tempo, Bend };
 
 enum class Param : uint8_t { Harmonics, Timbre, Morph, Macro, Count };
 
@@ -22,6 +22,7 @@ struct Event {
   float     value;  // NoteOn/Pitch: pitch, MIDI note, fractional (Pitch retunes
                     // a tag's held voices legato). Retrigger: decay ms,
                     // 0 = hold as a normal note. Param: 0..1. Tempo: bpm.
+                    // Bend: semitones added to every voice (MIDI pitch bend).
 };
 
 template <int N>

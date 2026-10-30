@@ -14,6 +14,7 @@ cardputer-synth. The original firmware is in `src/synth`; new work is in `src/pd
 - `engines/`: `pd::Engine` implementations (Plaits-shaped: note +
   harmonics/timbre/morph/macro + trigger, rendered in 32-sample blocks at
   48 kHz).
+- `midi/`: MIDI in, shared by every transport.
 - `synth/`: the instrument (voice pool), events + SPSC queue, sample store,
   looper, dice.
 - `ui/`: keymap, playing surfaces, arp patterns, patch format, tilt mapping.
@@ -28,6 +29,13 @@ cardputer-synth. The original firmware is in `src/synth`; new work is in `src/pd
   per sample (per block is fine), uint32 phase accumulators.
 - Bench on the device with serial `B` (8 voices per engine, % of one core per
   32-sample block). Keep every engine's peak well under 100%.
-- Build/flash: `pio run -e pd -t upload` with the deps pinned in
+- Build/flash: `tools/flash.sh` (env `pd`), with the deps pinned in
   `platformio.ini` (unpinned espressif32 8.x + M5Unified 0.2.28 crash on boot).
+  Env `pd` runs TinyUSB (serial CDC + USB MIDI), so a plain `pio upload` only
+  knocks it into the bootloader on the first try; the script sends serial `U`
+  and waits for the bootloader's port. The CDC port only talks once the host
+  raises DTR. Env `pd-jtag` keeps the USB-Serial/JTAG port, for backtraces.
+- MIDI: `midi/` is the shared, transport-free part (parser, USB packets,
+  clock tempo, the mapping); `hw/usb_midi` is only the wire. A new transport
+  (BLE) should hand bytes to `midi::Parser`, nothing more.
 - Player docs: `docs/pocketdynamo.md`. Credits: `NOTICE.md`.
