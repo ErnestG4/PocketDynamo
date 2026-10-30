@@ -6,6 +6,7 @@
 
 #include "../dsp/echo.h"
 #include "../dsp/envelope.h"
+#include "../dsp/fx.h"
 #include "../engines/break.h"
 #include "../engines/brocot_fm.h"
 #include "../engines/cloud.h"
@@ -90,6 +91,11 @@ class Instrument {
         break;
       case EventType::Tempo:
         tempo_ = clamp(e.value, 20.0f, 400.0f);
+        if (fx_) fx_->setTempo(tempo_);
+        break;
+      case EventType::Fx:
+        if (e.a < MasterFx::kSlots) { if (fx_) fx_->set(e.a, e.b, e.value); }
+        else if (echo_) echo_->setSpace(e.value);
         break;
       case EventType::Bend:
         bend_ = clamp(e.value, -24.0f, 24.0f);
@@ -135,6 +141,7 @@ class Instrument {
       for (size_t i = 0; i < kBlock; ++i) { out[i] += main[i] * g0; g0 += dg; }
     }
     active_ = active;
+    if (fx_) fx_->process(out, kBlock);
     if (echo_) echo_->process(out, kBlock);
     // Soft clip: cubic, unity slope at 0, reaching +-1 with zero slope at +-1.5.
     for (size_t i = 0; i < kBlock; ++i) {
@@ -145,6 +152,7 @@ class Instrument {
 
   // The master-bus echo, owned outside the pool (a bench pool has none).
   void setEcho(TapeEcho* echo) { echo_ = echo; }
+  void setFx(MasterFx* fx) { fx_ = fx; }
   float param(Param p) const { return params_[(int)p]; }
   EngineId engine() const { return engine_; }
   int activeVoices() const { return active_; }
@@ -223,6 +231,7 @@ class Instrument {
   float tempo_ = 120.0f;
   float bend_ = 0.0f;
   TapeEcho* echo_ = nullptr;
+  MasterFx* fx_ = nullptr;
   uint32_t clock_ = 0;
   volatile int active_ = 0;
 };

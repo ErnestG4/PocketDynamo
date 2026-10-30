@@ -80,6 +80,37 @@ int main() {
   check(jump < 0.2f, "a time change glides instead of clicking");
   printf("largest step after a time change %.3f\n", jump);
 
+  // SPACE with the echo off: a small room. A click comes back as a dense
+  // tail (not separate repeats) that decays, and noise at full SPACE stays
+  // bounded.
+  {
+    static TapeEcho r;
+    r.setTime(0.0f); r.setSpace(0.8f);
+    std::vector<float> click(48000 * 3, 0.0f);
+    for (int i = 0; i < 48; ++i) click[200 + i] = 0.8f * std::sin(i * 0.4f);
+    auto t = run(r, click);
+    // Every 10 ms window from 40 to 300 ms is dense (over half its samples
+    // within 20 dB of the window's peak): a wash, not separate repeats.
+    int sparse = 0;
+    for (int w = 4; w < 30; ++w) {
+      float m = 0; int busy = 0;
+      for (int i = 0; i < 480; ++i) m = std::max(m, std::fabs(t[200 + w * 480 + i]));
+      for (int i = 0; i < 480; ++i) busy += std::fabs(t[200 + w * 480 + i]) > 0.1f * m;
+      sparse += busy < 240;
+    }
+    float late2 = 0;
+    for (size_t i = t.size() - 4800; i < t.size(); ++i) late2 = std::max(late2, std::fabs(t[i]));
+    check(sparse == 0, "room: a dense tail, not separate repeats");
+    check(late2 < 0.01f, "room: the tail decays");
+    printf("room: %d sparse windows of 26, tail end %.4f\n", sparse, late2);
+    static TapeEcho rn;
+    rn.setTime(0.0f); rn.setSpace(1.0f);
+    auto big = run(rn, n);
+    float pk = 0;
+    for (float v : big) pk = std::max(pk, std::fabs(v));
+    check(pk < 3.0f && std::isfinite(pk), "room at full SPACE stays bounded");
+  }
+
   printf(failures ? "echo_test: %d FAILED\n" : "echo_test: ok\n", failures);
   return failures != 0;
 }

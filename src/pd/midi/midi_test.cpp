@@ -23,6 +23,7 @@ struct Log {
   void program(int n) { got.push_back("prog " + std::to_string(n)); }
   void allOff() { got.push_back("alloff"); }
   void echoMix(float v) { got.push_back("echo " + std::to_string((int)std::lround(v * 100))); }
+  void fx(int b, float v) { got.push_back("fx" + std::to_string(b) + " " + std::to_string((int)std::lround(v * 100))); }
   void tempo(float bpm) { got.push_back("tempo " + std::to_string((int)std::lround(bpm))); }
 };
 
@@ -39,8 +40,8 @@ int main() {
   const std::vector<std::string> want = {"on 60 100", "on 64 90", "off 60", "off 64"};
   check(g == want, "notes, running status, realtime and sysex interleaved");
 
-  g = run({0xB0, 64, 127, 0xB0, 1, 127, 74, 0, 0xB2, 64, 10, 0xB0, 123, 0, 91, 127});
-  check((g == std::vector<std::string>{"sus 1", "p2 100", "p1 0", "sus 0", "alloff", "echo 100"}), "CCs");
+  g = run({0xB0, 64, 127, 0xB0, 1, 127, 74, 0, 0xB2, 64, 10, 0xB0, 123, 0, 91, 127, 20, 127, 23, 0});
+  check((g == std::vector<std::string>{"sus 1", "p2 100", "p1 0", "sus 0", "alloff", "echo 100", "fx0 100", "fx3 0"}), "CCs");
 
   g = run({0xE0, 0, 0x40, 0xE0, 0x7F, 0x7F, 0xE0, 0, 0});
   check((g == std::vector<std::string>{"bend 0", "bend 200", "bend -200"}), "bend centre and ends");

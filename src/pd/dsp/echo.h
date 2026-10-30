@@ -9,6 +9,11 @@
 //     pass, ~120 Hz) and saturates (cubic), so repeats wear down;
 //   - switched off, the input stops reaching the tape but the loop keeps
 //     turning, so the tail rings out.
+// SPACE turns it toward a reverb: three more read heads at incommensurate
+// fractions of the delay thicken each pass, and four allpass diffusers (1.7
+// KB of int16) smear it, in the feedback and in what you hear. With the echo
+// off, SPACE alone runs the tape as a small room: a 30-80 ms loop, feedback
+// and level rising with the amount.
 // Pure — host-testable (echo_test.cpp).
 #pragma once
 #include <cmath>
@@ -35,13 +40,20 @@ class TapeEcho {
   }
   void setFeedback(float fb) { fb_ = clamp(fb, 0.0f, 0.95f); }
   void setMix(float mix) { mix_ = clamp(mix, 0.0f, 1.0f); }
+  void setSpace(float space) { space_ = clamp(space, 0.0f, 1.0f); }
   bool on() const { return on_; }
 
   // Adds the echo to io in place (48 kHz, n even). Out of line, so it keeps its
   // IRAM section instead of being inlined into the instrument's render (a
   // template member, which stays in flash).
   PD_HOT __attribute__((noinline)) void process(float* io, size_t n) {
-    if (!on_ && quietFor_ > kQuietSkip) return;   // a whole silent loop: skip it
+    const bool room = !on_ && space_ > 0.0f;   // SPACE with the echo off
+    const bool feeding = on_ || room;
+    if (!feeding && quietFor_ > kQuietSkip) return;   // a whole silent loop: skip it
+    const float space = space_;
+    const float roomTime = (0.03f + 0.05f * space) * kRate;   // a room has no tape bend: no glide
+    const float fb = room ? 0.5f + 0.4f * space : fb_;
+    const float mix = room ? 0.15f + 0.35f * space : mix_;
     // Everything runs at the tape's 24 kHz: one read, one trip round the
     // feedback path and one write per output pair; the wet signal goes back
     // up to 48 kHz by linear interpolation (the first of each pair half-way
@@ -50,34 +62,67 @@ class TapeEcho {
     for (size_t i = 0; i + 1 < n; i += 2) {
       time_ += kGlide * (target_ - time_);
       wow_ += kWowInc;
-      const float delay = time_ + kWowDepth * (1.0f + sineLut(sine, wow_));
-      float r = (float)w_ - delay;
-      if (r < 0.0f) r += (float)kLength;
-      const uint32_t ri = (uint32_t)r;
-      const float frac = r - (float)ri;
-      const uint32_t rj = ri + 1 < kLength ? ri + 1 : 0;
-      const float a = tape_.at(ri), b = tape_.at(rj);
-      const float wet = (a + frac * (b - a)) * (1.0f / 32768.0f);
+      const float delay = (room ? roomTime : time_) + kWowDepth * (1.0f + sineLut(sine, wow_));
+      float wet = readAt(delay);
+      if (space > 0.0f) {
+        // More heads, then diffusion: the repeat blurs into a wash.
+        const float taps = (float)(tapAt(delay * 0.77f) + tapAt(delay * 0.59f) + tapAt(delay * 0.45f)) *
+                           (1.0f / (3.0f * 32768.0f));
+        float x = wet + space * (taps - wet) * 0.6f;
+        for (int k = 0; k < kDiffusers; ++k) x = diffuse(k, x);
+        wet += std::min(1.0f, 1.5f * space) * (x - wet);   // all diffused by 2/3
+      }
 
       // Feedback: darker, thinner, saturated.
       lp_ += kLowPass * (wet - lp_);
       hp_ += kHighPass * (lp_ - hp_);
-      float f = clamp((lp_ - hp_) * fb_, -1.5f, 1.5f);
+      float f = clamp((lp_ - hp_) * fb, -1.5f, 1.5f);
       f -= (4.0f / 27.0f) * f * f * f;
 
-      const float in = on_ ? 0.5f * (io[i] + io[i + 1]) : 0.0f;   // pair average
+      const float in = feeding ? 0.5f * (io[i] + io[i + 1]) : 0.0f;   // pair average
       tape_.put(w_, (int)(clamp(in + f, -1.0f, 1.0f) * 32767.0f));
       if (++w_ == kLength) w_ = 0;
 
-      io[i] += mix_ * 0.5f * (lastWet_ + wet);
-      io[i + 1] += mix_ * wet;
+      io[i] += mix * 0.5f * (lastWet_ + wet);
+      io[i + 1] += mix * wet;
       lastWet_ = wet;
-      quietFor_ = std::fabs(wet) > 1e-4f || on_ ? 0 : quietFor_ + 2;
+      quietFor_ = std::fabs(wet) > 1e-4f || feeding ? 0 : quietFor_ + 2;
     }
   }
 
-
  private:
+  // The tape `delay` tape-samples behind the writer, interpolated.
+  inline float readAt(float delay) const {
+    float r = (float)w_ - delay;
+    if (r < 0.0f) r += (float)kLength;
+    const uint32_t ri = (uint32_t)r;
+    const float frac = r - (float)ri;
+    const uint32_t rj = ri + 1 < kLength ? ri + 1 : 0;
+    const float a = tape_.at(ri), b = tape_.at(rj);
+    return (a + frac * (b - a)) * (1.0f / 32768.0f);
+  }
+
+  // The nearest tape sample `delay` behind the writer: the extra heads feed
+  // the diffusers, which smear away anything interpolation would add.
+  inline int tapAt(float delay) const {
+    int r = (int)w_ - (int)delay;
+    if (r < 0) r += (int)kLength;
+    return tape_.at((uint32_t)r);
+  }
+
+  // Schroeder allpass k: y = -g x + z, z <- x + g y. int16 holds +-2.
+  inline float diffuse(int k, float x) {
+    int16_t* buf = diffBuf_ + kDiffStart[k];
+    uint16_t& pos = diffPos_[k];
+    const float z = (float)buf[pos] * (1.0f / 16384.0f);
+    const float y = -kDiffGain * x + z;
+    buf[pos] = (int16_t)clamp((x + kDiffGain * y) * 16384.0f, -32768.0f, 32767.0f);
+    if (++pos == kDiffLen[k]) pos = 0;
+    return y;
+  }
+
+
+
   // Per tape sample (24 kHz).
   static constexpr float kGlide = 1.0f / (0.08f * 24000.0f);
   static constexpr uint32_t kWowInc = (uint32_t)(0.55 / 24000.0 * 4294967296.0);
@@ -86,7 +131,16 @@ class TapeEcho {
   static constexpr float kHighPass = 0.031f;        // ~120 Hz
   static constexpr uint32_t kQuietSkip = 2 * kLength + 64;   // one loop, in output samples
 
+  // Diffusers: 4.7 .. 14 ms at 24 kHz, mutually prime.
+  static constexpr int kDiffusers = 4;
+  static constexpr uint16_t kDiffLen[kDiffusers] = {113, 162, 241, 337};
+  static constexpr uint16_t kDiffStart[kDiffusers] = {0, 113, 275, 516};
+  static constexpr float kDiffGain = 0.6f;
+
   Pack12<kLength> tape_;
+  int16_t diffBuf_[113 + 162 + 241 + 337] = {};
+  uint16_t diffPos_[kDiffusers] = {};
+  float space_ = 0.0f;
   uint32_t w_ = 0, wow_ = 0, quietFor_ = kQuietSkip + 1;
   float target_ = 0.25f * kRate, time_ = 0.0f;
   float fb_ = 0.45f, mix_ = 0.35f;

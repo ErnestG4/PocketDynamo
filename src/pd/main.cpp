@@ -22,7 +22,9 @@
 // c/v TIMBRE, b/n MORPH, m/, MACRO, d/f echo feedback, s/g echo mix).
 // Switching tilt off returns the controls to their set values.
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
-// q/w root down/up a step, 9/0 tempo, E echo time (off/1/8/1/8./1/4), D/F echo feedback, S/G echo mix, ` / 1 octave, TAB previous surface,
+// q/w root down/up a step, 9/0 tempo, E echo time (off/1/8/1/8./1/4), D/F echo feedback, S/G echo mix,
+// P the FX page (z..', then edit TONE / GRIT / SHAPE / SPACE; T/Y/U pick
+// the effect in TONE / GRIT / SHAPE: dsp/fx.h), ` / 1 octave, TAB previous surface,
 // \ previous engine,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
 // take, up to 2.5 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
@@ -72,6 +74,7 @@ using Synth = pd::Instrument<kVoices, pd::audio::kBlock>;
 
 Synth g_synth;
 pd::TapeEcho g_echo;   // the master bus's, outside the pool so a bench pool stays small
+pd::MasterFx g_fx;
 pd::SpscQueue<128> g_events;
 pd::Looper g_looper;
 
@@ -129,8 +132,14 @@ constexpr uint32_t kLatchTapMs = 300;                            // double-tap w
 
 // What a tilt axis can drive: the four controls (their Param ids) and the
 // echo's feedback and mix.
-enum TiltDest { kDestHarmonics, kDestTimbre, kDestMorph, kDestMacro, kDestEchoFb, kDestEchoMix, kNumDests };
-const char* const kDestNames[kNumDests] = {"HARMONICS", "TIMBRE", "MORPH", "MACRO", "ECHO FB", "ECHO MIX"};
+enum TiltDest { kDestHarmonics, kDestTimbre, kDestMorph, kDestMacro, kDestEchoFb, kDestEchoMix,
+                kDestFx0, kDestFx1, kDestFx2, kDestFx3, kNumDests };
+const char* const kDestNames[kNumDests] = {"HARMONICS", "TIMBRE", "MORPH", "MACRO", "ECHO FB", "ECHO MIX",
+                                           "TONE", "GRIT", "SHAPE", "SPACE"};
+// The FX page's four bars: TONE, GRIT and SHAPE are MasterFx slots (each
+// with an effect type), SPACE is the echo's diffusion.
+constexpr int kFxBars = 4;
+const char* const kFxBarNames[kFxBars] = {"TONE", "GRIT", "SHAPE", "SPACE"};
 
 struct Ui {
   int   octave = 3;          // the surface root sits at MIDI 12 * (octave + 1) + root
@@ -170,6 +179,11 @@ struct Ui {
   int   echoDiv = -1;          // kEchoDivs index, -1 off
   float echoFb = 0.45f, echoMix = 0.35f;
   float echoSent[2] = {-1.0f, -1.0f};   // feedback, mix as last sent
+  bool  fxPage = false;        // the four bars (and FN+z..,) show FX instead of the sound
+  int   fxType[3] = {0, 0, 0}; // TONE, GRIT, SHAPE effect, MasterFx::name()
+  float fxAmount[kFxBars] = {};
+  float fxSent[kFxBars] = {-1.0f, -1.0f, -1.0f, -1.0f};
+  int   fxTypeSent[3] = {-1, -1, -1};
   bool  saveArm = false;       // FN+SHIFT held: digits save instead of load
   int   recKey = -1;           // key holding a recording, or -1
   uint32_t recStart = 0;
@@ -204,6 +218,7 @@ bool tilted(int p) { return tiltAxisFor(p) >= 0; }
 float effective(int p) { const int a = tiltAxisFor(p); return a >= 0 ? g_ui.tiltAxis[a] : g_ui.params[p]; }
 float echoFbNow() { const int a = tiltAxisFor(kDestEchoFb); return a >= 0 ? 0.95f * g_ui.tiltAxis[a] : g_ui.echoFb; }
 float echoMixNow() { const int a = tiltAxisFor(kDestEchoMix); return a >= 0 ? g_ui.tiltAxis[a] : g_ui.echoMix; }
+float fxNow(int bar) { const int a = tiltAxisFor(kDestFx0 + bar); return a >= 0 ? g_ui.tiltAxis[a] : g_ui.fxAmount[bar]; }
 
 // Send the controls (set value + tilt) that have moved since last sent.
 void pushParams() {
@@ -221,13 +236,30 @@ void pushParams() {
     g_ui.echoSent[i] = fx[i];
     g_ui.dirty = true;
   }
+  for (int b = 0; b < kFxBars; ++b) {
+    const float v = fxNow(b);
+    const int type = b < 3 ? g_ui.fxType[b] : 0;
+    if (std::fabs(v - g_ui.fxSent[b]) < 1.0f / 512.0f && (b >= 3 || type == g_ui.fxTypeSent[b])) continue;
+    send(pd::EventType::Fx, (uint8_t)b, (uint8_t)type, v);
+    g_ui.fxSent[b] = v;
+    if (b < 3) g_ui.fxTypeSent[b] = type;
+    g_ui.dirty = true;
+  }
 }
 
+// FN+z..,: the sound's controls, or on the FX page the four FX bars.
 void nudgeParam(pd::Param p, float d) {
-  float& v = g_ui.params[(int)p];
+  float& v = g_ui.fxPage ? g_ui.fxAmount[(int)p] : g_ui.params[(int)p];
   v = pd::clamp(v + d, 0.0f, 1.0f);
   pushParams();
   g_ui.dirty = true;
+}
+
+const char* fxBarLabel(int bar) {
+  static char label[16];
+  if (bar >= 3) return kFxBarNames[bar];
+  snprintf(label, sizeof label, "%s %s", kFxBarNames[bar], pd::MasterFx::name(bar, g_ui.fxType[bar]));
+  return label;
 }
 
 // --- echo: tempo-synced tape echo on the master bus (dsp/echo.h) ---
@@ -342,6 +374,7 @@ bool tiltKey(char label, int* axis, int* dest) {
   const int i = (int)(at - kKeys);
   *axis = i & 1;
   *dest = kDests[i >> 1];
+  if (g_ui.fxPage && *dest <= kDestMacro) *dest = kDestFx0 + *dest;   // the bars on screen
   return true;
 }
 
@@ -588,6 +621,7 @@ struct MidiHandler {
   }
   void allOff() { ::allOff(); }
   void echoMix(float v) { g_ui.echoMix = v; pushParams(); }
+  void fx(int bar, float v) { g_ui.fxAmount[bar] = v; pushParams(); }
   void tempo(float bpm) { if (std::fabs(bpm - g_ui.bpm) >= 0.5f) setTempo(std::round(bpm)); }
 };
 
@@ -670,6 +704,8 @@ pd::patch::Patch currentPatch() {
   p.echoMix = g_ui.echoMix;
   snprintf(p.tiltSide, sizeof p.tiltSide, "%s", kDestNames[g_ui.tiltDest[0]]);
   snprintf(p.tiltFront, sizeof p.tiltFront, "%s", kDestNames[g_ui.tiltDest[1]]);
+  for (int b = 0; b < 3; ++b) snprintf(p.fxType[b], sizeof p.fxType[b], "%s", pd::MasterFx::name(b, g_ui.fxType[b]));
+  memcpy(p.fxAmount, g_ui.fxAmount, sizeof p.fxAmount);
   return p;
 }
 
@@ -692,6 +728,10 @@ void applyPatch(const pd::patch::Patch& p) {
     if (!strcmp(p.tiltFront, kDestNames[i])) front = i;
   }
   if (side != front) { g_ui.tiltDest[0] = side; g_ui.tiltDest[1] = front; }
+  for (int b = 0; b < 3; ++b)
+    for (int t = 0; t < pd::MasterFx::kTypes; ++t)
+      if (!strcmp(p.fxType[b], pd::MasterFx::name(b, t))) g_ui.fxType[b] = t;
+  for (int b = 0; b < kFxBars; ++b) g_ui.fxAmount[b] = pd::clamp(p.fxAmount[b], 0.0f, 1.0f);
   sendEcho();
   send(pd::EventType::Engine, (uint8_t)g_ui.engine);
   pushParams();
@@ -772,6 +812,19 @@ uint32_t fnAction(char label) {
       snprintf(msg, sizeof msg, "ECHO FEEDBACK %.0f%%", g_ui.echoFb * 100.0f);
       flash(msg);
       return 80;
+    }
+    case 'p':   // FX page
+      g_ui.fxPage = !g_ui.fxPage;
+      flash(g_ui.fxPage ? "FX PAGE" : "SOUND PAGE");
+      return 0;
+    case 't': case 'y': case 'u': {   // the effect in TONE, GRIT, SHAPE
+      const int bar = label == 't' ? 0 : label == 'y' ? 1 : 2;
+      g_ui.fxType[bar] = (g_ui.fxType[bar] + 1) % pd::MasterFx::kTypes;
+      pushParams();
+      static char msg[20];   // flash keeps the pointer: its own copy, not the label buffer
+      snprintf(msg, sizeof msg, "%s", fxBarLabel(bar));
+      flash(msg);
+      return 0;
     }
     case 's': case 'g': {   // echo mix
       g_ui.echoMix = pd::clamp(g_ui.echoMix + (label == 'g' ? 0.05f : -0.05f), 0.0f, 1.0f);
@@ -900,6 +953,18 @@ void onKey(int r, int c, bool pressed) {
 // Drawn off-screen and pushed whole: no flicker from the full redraw.
 M5Canvas g_canvas(&M5Cardputer.Display);
 
+// FX bars: cyan (the FX page's colour) or green while tilted.
+void drawFxBar(int y, int bar) {
+  auto& d = g_canvas;
+  d.setTextColor(TFT_CYAN, TFT_BLACK);
+  d.setCursor(4, y + 2);
+  d.print(fxBarLabel(bar));
+  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  d.drawRect(64, y, 172, 12, TFT_DARKGREY);
+  d.fillRect(65, y + 1, 170, 10, TFT_BLACK);
+  d.fillRect(65, y + 1, (int)(170 * fxNow(bar)), 10, tiltAxisFor(kDestFx0 + bar) >= 0 ? TFT_GREEN : TFT_CYAN);
+}
+
 void drawBar(int y, const char* name, int p) {
   auto& d = g_canvas;
   d.setCursor(4, y + 2);
@@ -971,10 +1036,14 @@ void draw(const pd::audio::Stats& s) {
   d.setCursor(206, 24);
   d.printf("%lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
   d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  drawBar(36, "HARMONICS", 0);
-  drawBar(52, "TIMBRE", 1);
-  drawBar(68, "MORPH", 2);
-  drawBar(84, "MACRO", 3);
+  if (g_ui.fxPage) {
+    for (int b = 0; b < kFxBars; ++b) drawFxBar(36 + 16 * b, b);
+  } else {
+    drawBar(36, "HARMONICS", 0);
+    drawBar(52, "TIMBRE", 1);
+    drawBar(68, "MORPH", 2);
+    drawBar(84, "MACRO", 3);
+  }
 
   if (g_ui.strip != Strip::Notes) {
     for (int i = 0; i < 12; ++i) {
@@ -1052,7 +1121,7 @@ void cpuBench() {
 void printState(const pd::audio::Stats& s) {
   Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(%s=%.2f,%s=%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu xrun=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
-                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f heap=%lu/%lu up=%lu\n",
+                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f fx=%s:%.2f,%s:%.2f,%s:%.2f,SPACE:%.2f page=%s heap=%lu/%lu up=%lu\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
                 g_ui.sustain, g_ui.tilt, kDestNames[g_ui.tiltDest[0]], g_ui.tiltAxis[0],
                 kDestNames[g_ui.tiltDest[1]], g_ui.tiltAxis[1], g_synth.activeVoices(),
@@ -1062,6 +1131,8 @@ void printState(const pd::audio::Stats& s) {
                 effective(0), effective(1), effective(2), effective(3),
                 pd::sampleStore().ready() ? (float)pd::sampleStore().length() / pd::SampleStore::kRate : 0.0f,
                 pd::sampleStore().slices(), g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "off", g_ui.echoFb,
+                pd::MasterFx::name(0, g_ui.fxType[0]), fxNow(0), pd::MasterFx::name(1, g_ui.fxType[1]), fxNow(1),
+                pd::MasterFx::name(2, g_ui.fxType[2]), fxNow(2), fxNow(3), g_ui.fxPage ? "FX" : "SOUND",
                 (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(), (unsigned long)(millis() / 1000));
 }
 
@@ -1143,7 +1214,8 @@ void setup() {
   const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
   const bool keysOk = pd::keys::begin();
   pd::sineTable();   // build the shared table now, not inside the first FM note's block
-  g_synth.setEcho(&g_echo);   // before audio starts: the render task reads it
+  g_synth.setEcho(&g_echo);   // before audio starts: the render task reads them
+  g_synth.setFx(&g_fx);
   const bool audioOk = pd::audio::begin(render);
   const bool sdOk = pd::storage::begin();
   pd::usbmidi::begin();

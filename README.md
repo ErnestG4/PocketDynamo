@@ -10,7 +10,8 @@ An 8-voice old-school synth for the **M5Stack Cardputer ADV**.
 - **A keyboard laid out for playing:** scale-locked layouts, a chromatic one, and 49-EDO tunings.
 - **Hold strips:** CHORD, RATCHET and ARP.
 - **MIDI in** over USB and Bluetooth LE: notes, the four controls, sustain, bend and clock.
-- **Also:** a tempo-synced tape echo, tilt control, a looper, and patches saved to the SD card.
+- **Effects:** a tempo-synced tape echo that doubles as a small reverb, a filter, crush, one-bit PWM, drive, wavefolding, ring mod and tremolo.
+- **Also:** tilt that can drive any control or effect, a looper, and patches saved to the SD card.
 
 ## Install
 

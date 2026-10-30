@@ -24,7 +24,11 @@ struct Patch {
   float echoMix = 0.35f;
   char  tiltSide[12] = "TIMBRE";                 // what each tilt axis drives
   char  tiltFront[12] = "MORPH";
+  char  fxType[3][8] = {"LP", "CRUSH", "FOLD"};  // TONE, GRIT, SHAPE
+  float fxAmount[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // TONE, GRIT, SHAPE, SPACE
 };
+
+constexpr const char* kFxKeys[4] = {"fx_tone", "fx_grit", "fx_shape", "fx_space"};
 
 constexpr const char* kParamKeys[4] = {"harmonics", "timbre", "morph", "macro"};
 
@@ -34,11 +38,13 @@ inline int toText(const Patch& p, char* buf, size_t n) {
                   "pocketdynamo patch 1\n"
                   "engine=%s\nsurface=%s\noctave=%d\nroot=%.4f\nbpm=%.1f\n"
                   "%s=%.4f\n%s=%.4f\n%s=%.4f\n%s=%.4f\n"
-                  "echo=%s\necho_fb=%.3f\necho_mix=%.3f\ntilt_side=%s\ntilt_front=%s\n",
+                  "echo=%s\necho_fb=%.3f\necho_mix=%.3f\ntilt_side=%s\ntilt_front=%s\n"
+                  "fx_tone=%s %.3f\nfx_grit=%s %.3f\nfx_shape=%s %.3f\nfx_space=%.3f\n",
                   p.engine, p.surface, p.octave, p.root, p.bpm,
                   kParamKeys[0], p.params[0], kParamKeys[1], p.params[1],
                   kParamKeys[2], p.params[2], kParamKeys[3], p.params[3],
-                  p.echo, p.echoFeedback, p.echoMix, p.tiltSide, p.tiltFront);
+                  p.echo, p.echoFeedback, p.echoMix, p.tiltSide, p.tiltFront,
+                  p.fxType[0], p.fxAmount[0], p.fxType[1], p.fxAmount[1], p.fxType[2], p.fxAmount[2], p.fxAmount[3]);
 }
 
 // Parses what toText wrote (or a hand edit of it). False if it isn't a patch.
@@ -69,6 +75,13 @@ inline bool fromText(const char* text, Patch* out) {
       else if (!strcmp(l, "echo_mix")) p.echoMix = (float)atof(v);
       else if (!strcmp(l, "tilt_side")) copy(p.tiltSide, sizeof p.tiltSide);
       else if (!strcmp(l, "tilt_front")) copy(p.tiltFront, sizeof p.tiltFront);
+      else if (!strcmp(l, "fx_space")) p.fxAmount[3] = (float)atof(v);
+      else for (int i = 0; i < 3; ++i)
+        if (!strcmp(l, kFxKeys[i])) {   // "<TYPE> <amount>"
+          char t[8] = {};
+          float a = 0.0f;
+          if (sscanf(v, "%7s %f", t, &a) >= 1) { memcpy(p.fxType[i], t, sizeof t); p.fxAmount[i] = a; }
+        }
       else for (int i = 0; i < 4; ++i) if (!strcmp(l, kParamKeys[i])) p.params[i] = (float)atof(v);
     }
     line += len + (end ? 1 : 0);

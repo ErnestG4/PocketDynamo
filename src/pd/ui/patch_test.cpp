@@ -32,6 +32,13 @@ int main() {
                  std::fabs(e.echoMix - 0.2f) < 1e-3f, "echo round-trips");
   check(!strcmp(e.tiltSide, "ECHO MIX") && !strcmp(e.tiltFront, "HARMONICS"), "tilt routing round-trips");
   check(!strcmp(c.tiltSide, "TIMBRE") && !strcmp(c.tiltFront, "MORPH"), "older patches keep the default routing");
+  Patch f; snprintf(f.fxType[0], 8, "BP"); f.fxAmount[0] = 0.4f; snprintf(f.fxType[1], 8, "PWM"); f.fxAmount[1] = 0.7f;
+  f.fxAmount[3] = 0.55f;
+  char ft[768]; toText(f, ft, sizeof ft);
+  Patch g; check(fromText(ft, &g) && !strcmp(g.fxType[0], "BP") && std::fabs(g.fxAmount[0] - 0.4f) < 1e-3f &&
+                 !strcmp(g.fxType[1], "PWM") && !strcmp(g.fxType[2], "FOLD") && std::fabs(g.fxAmount[3] - 0.55f) < 1e-3f,
+                 "fx round-trip");
+  check(c.fxAmount[0] == 0.0f && c.fxAmount[3] == 0.0f, "older patches load with the FX off");
   check(!fromText("hello", &c), "not a patch");
 
   uint8_t h[kWavHeader];

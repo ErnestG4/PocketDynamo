@@ -87,6 +87,9 @@ the right key on front/back:
 | echo feedback | `d` | `f` |
 | echo mix | `s` | `g` |
 
+On the FX page the same keys put the effects on tilt instead: `z`/`x` TONE,
+`c`/`v` GRIT, `b`/`n` SHAPE, `m`/`,` SPACE.
+
 Routing a control switches tilt on. A control already on the other axis
 swaps over. Tilted bars turn green, and the echo label turns cyan while tilt
 drives the echo. Switching tilt off returns everything to its set value. A
@@ -112,6 +115,8 @@ patch saves the routing (not whether tilt is on).
 | `e` | **echo** time: off → 1/8 → dotted 1/8 → 1/4 → off |
 | `d` / `f` | echo feedback down / up. Hold to repeat |
 | `s` / `g` | echo mix down / up. Hold to repeat |
+| `p` | **FX page**: the four bars (and FN+`z`…`,`) switch between the sound and the effects |
+| `t` / `y` / `u` | pick the effect in TONE / GRIT / SHAPE |
 | `tab` / `\` | previous surface / previous engine |
 | `del` | undo / redo the last dice |
 | `r` (hold) | **record** from the mic into the take |
@@ -145,6 +150,25 @@ halves until it does. It behaves like tape:
 The echo's time, feedback and mix are saved with a patch. The status line shows `E` and the
 time, green while the echo is on.
 
+## The FX page (FN+`p`)
+
+FN+`p` flips the four bars from the sound's controls to four effects on
+everything you play, and back. On the FX page FN+`z`/`x`, `c`/`v`, `b`/`n`
+and `m`/`,` set the effects' amounts instead; each is off at 0. The bars turn
+cyan so you can tell which page you're on.
+
+| Bar | FN+ | Effects | What the amount does |
+|---|---|---|---|
+| **TONE** | `t` | LP / BP / HP filter | LP closes from fully open, HP opens up from the lows, BP sweeps its peak from 100 Hz to 8 kHz; resonance rises with it |
+| **GRIT** | `y` | CRUSH / PWM / DRIVE | CRUSH: fewer bits and a lower sample rate. PWM: the sound re-encoded as a one-bit pulse train, the way the Spectrum's beeper played samples, its carrier dropping as you turn up. DRIVE: saturation |
+| **SHAPE** | `u` | FOLD / RING / TREM | FOLD: a wavefolder. RING: ring modulation, 30 Hz–2 kHz. TREM: tremolo in 8th notes at the tempo |
+| **SPACE** | | reverb | With the echo on, smears each repeat into a wash. With the echo off, turns the tape into a small room |
+
+They run in the order SHAPE → GRIT → TONE → echo. On the FX page, holding
+`ctrl` and tapping a bar's key puts that effect on tilt, as on the sound page.
+MIDI CC 20–23 set the four amounts, and a patch saves the effects and their
+amounts.
+
 ## The take (FN+`r`)
 
 Hold FN+`r` to record from the mic, for up to 2.5 s at 24 kHz and 12 bits (SP-1200
@@ -171,7 +195,7 @@ ratchet output, control sweeps and engine changes.
 ## Patches (FN+`2`…`8`)
 
 A patch saves the engine, surface, root, octave, tempo, the four controls, the
-echo and the tilt routing, plus the take. It doesn't save the strip, tilt or volume.
+echo, the FX page and the tilt routing, plus the take. It doesn't save the strip, tilt or volume.
 - Patches are plain `key=value` text in `/pocketdynamo/pN.txt` on the SD card,
   so you can edit them by hand. The take goes alongside as `pN.wav`.
 - Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, resampled to
@@ -200,7 +224,8 @@ PocketDynamo listens for MIDI two ways, both at once, on every channel:
 - **The four controls:** CC 16–19 are HARMONICS, TIMBRE, MORPH and MACRO.
   The usual performance CCs land on them too: 71 (resonance) HARMONICS,
   74 (brightness) TIMBRE, 1 (mod wheel) MORPH, 2 (breath) MACRO.
-- **CC 91** (the usual effects send) is the echo mix.
+- **CC 91** (the usual effects send) is the echo mix; **CC 20–23** are the
+  FX page's TONE, GRIT, SHAPE and SPACE.
 - **Pitch bend** bends everything ±2 semitones.
 - **Program change** 0–6 picks the engine (in the `\` order).
 - **MIDI clock** sets the tempo, so the arp, ratchets, BREAK and the looper
