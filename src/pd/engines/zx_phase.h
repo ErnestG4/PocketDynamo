@@ -36,7 +36,7 @@ class ZxPhaseEngine : public Engine {
     sweep_count_ = 0;
   }
 
-  void render(const EngineParams& p, float* out, float* aux, size_t size) override {
+  PD_HOT void render(const EngineParams& p, float* out, float* aux, size_t size) override {
     const bool struck = (p.trigger & kTriggerRising) != 0;
     if (struck) reset();
 
@@ -131,59 +131,134 @@ class ZxPhaseEngine : public Engine {
         ? (uint32_t)((macro * 2.0f - 1.0f) * 0.35f * kTwo32)
         : 0u;
 
+    // The 1-bit loop runs on locals (members through `this` would be loaded
+    // and stored every step), mixes through a truth table instead of
+    // branching on the zone, and keeps duty integer: index/32 of a cycle is
+    // exactly index << 27.
     const uint32_t duty1 = zone_ == 2 ? kAndDuty1 : kDuty1;
+    const uint32_t table = kMixTable[zone_];   // bit (b1 << 1 | b2) = mix(b1, b2)
+    const bool noise = noise_mode_, ghost = ghost_duty != 0;
+    // Most playing has neither the LFSR nor the ghost in the mix: a lean
+    // kernel then, with few enough live values to stay in registers.
+    if (!noise && !ghost) {
+      if (feedback_on) fastLoop<true>(out, aux, size, sweep_on, sweep_min, sweep_period, increment1, increment2, duty1, table, tap1, tap2);
+      else fastLoop<false>(out, aux, size, sweep_on, sweep_min, sweep_period, increment1, increment2, duty1, table, tap1, tap2);
+      return;
+    }
+    uint32_t ph1 = phase1_, ph2 = phase2_, gph = ghost_phase_;
+    uint32_t lfsr = lfsr_;
+    uint64_t history = lfsr_history_;
+    float dcMain = dc_main_, dcAux = dc_aux_;
     for (size_t i = 0; i < size; ++i) {
-      if (tick_.next() && sweep_on) {
-        ++sweep_count_;
-        if ((sweep_count_ % (uint32_t)sweep_period) == 0) {
-          duty2_index_ += sweep_direction_;
-          if (duty2_index_ >= 14) { duty2_index_ = 14; sweep_direction_ = -1; }
-          else if (duty2_index_ <= sweep_min) { duty2_index_ = sweep_min; sweep_direction_ = 1; }
-        }
-      }
-      const uint32_t duty2 = (uint32_t)((float)duty2_index_ * (1.0f / 32.0f) * kTwo32);
+      sweepTick(sweep_on, sweep_min, sweep_period);
+      const uint32_t duty2 = (uint32_t)duty2_index_ << 27;
       int acc = 0, acc2 = 0;
       for (int k = 0; k < 4; ++k) {
-        phase1_ += increment1;
-        const uint32_t previous2 = phase2_;
-        phase2_ += increment2;
-        if (phase2_ < previous2) {
-          lfsr_history_ = (lfsr_history_ << 1) | (lfsr_ & 1u);
-          const uint16_t fb = (lfsr_ ^ (lfsr_ >> 1)) & 1u;
-          lfsr_ = (uint16_t)((lfsr_ >> 1) | (fb << 14));
+        ph1 += increment1;
+        const uint32_t previous2 = ph2;
+        ph2 += increment2;
+        if (ph2 < previous2) {
+          history = (history << 1) | (lfsr & 1u);
+          const uint32_t fb = (lfsr ^ (lfsr >> 1)) & 1u;
+          lfsr = (lfsr >> 1) | (fb << 14);
         }
-        const int b1 = phase1_ < duty1 ? 1 : 0;
-        const int b2 = noise_mode_ ? (int)(lfsr_ & 1u) : (phase2_ < duty2 ? 1 : 0);
-        int mixed = zone_ == 0 ? (b1 ^ b2) : zone_ == 1 ? (b1 | b2) : (b1 & b2);
+        const uint32_t b1 = ph1 < duty1;
+        const uint32_t b2 = noise ? (lfsr & 1u) : (uint32_t)(ph2 < duty2);
+        uint32_t mixed = (table >> (b1 << 1 | b2)) & 1u;
         if (feedback_on) {
-          const uint32_t q1 = phase1_ - tap1, q2 = phase2_ - tap2;
-          const int d1 = q1 < duty1 ? 1 : 0;
-          int d2;
-          if (noise_mode_) {
-            const uint32_t back = tap2_wraps + (phase2_ < tap2 ? 1u : 0u);
-            d2 = back == 0 ? (int)(lfsr_ & 1u) : (int)((lfsr_history_ >> (back < 64 ? back - 1 : 63)) & 1u);
+          const uint32_t d1 = ph1 - tap1 < duty1;
+          uint32_t d2;
+          if (noise) {
+            const uint32_t back = tap2_wraps + (ph2 < tap2 ? 1u : 0u);
+            d2 = back == 0 ? (lfsr & 1u) : (uint32_t)(history >> (back < 64 ? back - 1 : 63)) & 1u;
           } else {
-            d2 = q2 < duty2 ? 1 : 0;
+            d2 = ph2 - tap2 < duty2;
           }
-          mixed ^= zone_ == 0 ? (d1 ^ d2) : zone_ == 1 ? (d1 | d2) : (d1 & d2);
+          mixed ^= (table >> (d1 << 1 | d2)) & 1u;
         }
-        if (ghost_duty) {
-          ghost_phase_ += kGhostIncrement;
-          mixed ^= ghost_phase_ < ghost_duty ? 1 : 0;
+        if (ghost) {
+          gph += kGhostIncrement;
+          mixed ^= gph < ghost_duty;
         }
-        acc += mixed;
-        acc2 += b2;
+        acc += (int)mixed;
+        acc2 += (int)b2;
       }
       const float v = (float)acc * 0.5f - 1.0f;
       const float v2 = (float)acc2 * 0.5f - 1.0f;
-      dc_main_ += 0.002f * (v - dc_main_);
-      dc_aux_ += 0.002f * (v2 - dc_aux_);
-      out[i] = 0.6f * (v - dc_main_);
-      aux[i] = 0.6f * (v2 - dc_aux_);
+      dcMain += 0.002f * (v - dcMain);
+      dcAux += 0.002f * (v2 - dcAux);
+      out[i] = 0.6f * (v - dcMain);
+      aux[i] = 0.6f * (v2 - dcAux);
     }
+    phase1_ = ph1; phase2_ = ph2; ghost_phase_ = gph;
+    lfsr_ = (uint16_t)lfsr;
+    lfsr_history_ = history;
+    dc_main_ = dcMain; dc_aux_ = dcAux;
   }
 
  private:
+  // The PWM sweep's tick, once per output sample.
+  inline void sweepTick(bool sweep_on, int sweep_min, int sweep_period) {
+    if (tick_.next() && sweep_on) {
+      ++sweep_count_;
+      if ((sweep_count_ % (uint32_t)sweep_period) == 0) {
+        duty2_index_ += sweep_direction_;
+        if (duty2_index_ >= 14) { duty2_index_ = 14; sweep_direction_ = -1; }
+        else if (duty2_index_ <= sweep_min) { duty2_index_ = sweep_min; sweep_direction_ = 1; }
+      }
+    }
+  }
+
+  // The lean kernel: no LFSR in the mix and no ghost. The LFSR still clocks
+  // on osc 2's wraps (it must be where it would be when noise mode comes
+  // in), so the wraps are counted and it catches up once per block.
+  // Bit-identical to the generic loop.
+  template <bool kFeedback>
+  __attribute__((always_inline)) inline void fastLoop(float* out, float* aux, size_t size, bool sweep_on,
+      int sweep_min, int sweep_period, uint32_t inc1, uint32_t inc2, uint32_t duty1, uint32_t table,
+      uint32_t tap1, uint32_t tap2) {
+    uint32_t ph1 = phase1_, ph2 = phase2_, wraps = 0;
+    float dcMain = dc_main_, dcAux = dc_aux_;
+    for (size_t i = 0; i < size; ++i) {
+      sweepTick(sweep_on, sweep_min, sweep_period);
+      const uint32_t duty2 = (uint32_t)duty2_index_ << 27;
+      uint32_t acc = 0, acc2 = 0;
+#define PD_ZX_STEP                                                         \
+      {                                                                    \
+        ph1 += inc1;                                                       \
+        const uint32_t prev = ph2;                                         \
+        ph2 += inc2;                                                       \
+        wraps += ph2 < prev;                                               \
+        const uint32_t b1 = ph1 < duty1, b2 = ph2 < duty2;                 \
+        uint32_t m = table >> (b1 << 1 | b2);                              \
+        if (kFeedback) {                                                   \
+          const uint32_t d1 = ph1 - tap1 < duty1, d2 = ph2 - tap2 < duty2; \
+          m ^= table >> (d1 << 1 | d2);                                    \
+        }                                                                  \
+        acc += m & 1u;                                                     \
+        acc2 += b2;                                                        \
+      }
+      PD_ZX_STEP PD_ZX_STEP PD_ZX_STEP PD_ZX_STEP
+#undef PD_ZX_STEP
+      const float v = (float)(int)acc * 0.5f - 1.0f;
+      const float v2 = (float)(int)acc2 * 0.5f - 1.0f;
+      dcMain += 0.002f * (v - dcMain);
+      dcAux += 0.002f * (v2 - dcAux);
+      out[i] = 0.6f * (v - dcMain);
+      aux[i] = 0.6f * (v2 - dcAux);
+    }
+    phase1_ = ph1; phase2_ = ph2;
+    dc_main_ = dcMain; dc_aux_ = dcAux;
+    uint32_t lfsr = lfsr_;
+    uint64_t history = lfsr_history_;
+    for (uint32_t w = 0; w < wraps; ++w) {
+      history = (history << 1) | (lfsr & 1u);
+      lfsr = (lfsr >> 1) | (((lfsr ^ (lfsr >> 1)) & 1u) << 14);
+    }
+    lfsr_ = (uint16_t)lfsr;
+    lfsr_history_ = history;
+  }
+
   static constexpr float kTwo32 = 4294967296.0f;
   static constexpr float kTwo30 = 1073741824.0f;  // one internal (4x) step per sample
   // Supersonic GHOST carrier, ~26.5 kHz at the internal 4x rate: audible only
@@ -196,6 +271,9 @@ class ZxPhaseEngine : public Engine {
   // to whatever block size we're called with.
   static constexpr float kKickDecay = 0.9835f;
   static constexpr float kPlaitsBlock = 12.0f;
+
+  // Mix truth tables, indexed by (b1 << 1 | b2): XOR 0110, OR 1110, AND 1000.
+  static constexpr uint32_t kMixTable[3] = {0x6u, 0xEu, 0x8u};
 
   struct Ratio { uint32_t p, q; };
   // MORPH's ladder: unison, 4/3, 3/2, 2, 3, 4 (the old 0/5/7/12/19/24

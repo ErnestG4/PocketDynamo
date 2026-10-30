@@ -7,6 +7,18 @@
 #include <cstddef>
 #include <cstdint>
 
+// PD_HOT puts a render path in IRAM on the device. Both cores share one
+// 16 KB flash instruction cache, and core 0's display, USB and BLE code keeps
+// evicting the render loops, which then refill from flash mid-block. IRAM
+// is carved from the same SRAM as the heap, so it's for the per-sample
+// loops only. Nothing on the host.
+#if defined(ESP_PLATFORM)
+#include "esp_attr.h"
+#define PD_HOT IRAM_ATTR
+#else
+#define PD_HOT
+#endif
+
 #ifndef PD_SAMPLE_RATE
 #define PD_SAMPLE_RATE 48000.0f   // the host harness overrides this to 47872.34f
 #endif                            // to compare against Plaits-lab renders

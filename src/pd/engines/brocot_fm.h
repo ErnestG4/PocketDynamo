@@ -70,7 +70,7 @@ class BrocotFmEngine : public Engine {
     fresh_ = true;
   }
 
-  void render(const EngineParams& p, float* out, float* aux, size_t size) override {
+  PD_HOT void render(const EngineParams& p, float* out, float* aux, size_t size) override {
     if (size == 0) return;
     const bool struck = (p.trigger & kTriggerRising) != 0;
     const float n = (float)size;

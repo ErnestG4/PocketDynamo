@@ -57,6 +57,10 @@
 #define PD_VERSION "dev"
 #endif
 
+// Explicit, so GCC honours render()'s PD_HOT (IRAM) section: it drops the
+// attribute on an implicit instantiation of a class-template member.
+template class pd::Instrument<8, pd::audio::kBlock>;
+
 namespace {
 
 constexpr int kVoices = 8;

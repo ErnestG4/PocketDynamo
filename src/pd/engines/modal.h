@@ -202,9 +202,11 @@ inline const Tables& tables() {
 // a = c1·dc, b = c2·dc² (dc < 1 is a damper pulling every pole in). Two modes
 // a pass, Kyklophoria's pairing: two independent chains fill the FPU's
 // latency, and the sums are the same either way. kWeighted multiplies each
-// sample by w[k] on its way into out (the strike's ramp).
+// sample by w[k] on its way into out (the strike's ramp). Always inlined,
+// so it lands in runBank's IRAM: a template's out-of-line copy can't take
+// PD_HOT's section and would run from flash.
 template <bool kWeighted>
-inline void runModes(const uint8_t* idx, int count, const float* c1, const float* c2,
+__attribute__((always_inline)) inline void runModes(const uint8_t* idx, int count, const float* c1, const float* c2,
                      float* y1, float* y2, float dc, const float* w, float* out, int m) {
   const float dc2 = dc * dc;
   int i = 0;
@@ -284,7 +286,7 @@ class ModalEngine : public Engine {
     for (int k = 0; k < modal::kModes; ++k) pick_g_[k] = 0.0f;
   }
 
-  void render(const EngineParams& p, float* out, float* aux, size_t n) override {
+  PD_HOT void render(const EngineParams& p, float* out, float* aux, size_t n) override {
     // A NaN control would build NaN coefficients into the caches: it reads
     // as the middle of its range instead.
     const float note = p.note == p.note ? clamp(p.note, -128.0f, 127.0f) : 60.0f;
@@ -700,7 +702,7 @@ class ModalEngine : public Engine {
   }
 
   // One run of m <= kRun samples with the choke and the ramp fixed through it.
-  void runBank(const uint8_t* idx, int count, float* out, int m) {
+  PD_HOT void runBank(const uint8_t* idx, int count, float* out, int m) {
     for (int k = 0; k < m; ++k) out[k] = 0.0f;
     // A main state known to be zero (a fresh note, the old one gone to the
     // tail) is not run: a fresh strike costs one bank through its ramp, not

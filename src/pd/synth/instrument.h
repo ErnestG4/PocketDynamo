@@ -100,7 +100,7 @@ class Instrument {
   }
 
   // Render one block of mono output.
-  void render(float* out) {
+  PD_HOT void render(float* out) {
     for (size_t i = 0; i < kBlock; ++i) out[i] = 0.0f;
     float main[kBlock], aux[kBlock];
     int active = 0;   // published once, at the end: the UI core reads it

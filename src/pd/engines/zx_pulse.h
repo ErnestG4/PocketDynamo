@@ -35,7 +35,7 @@ class ZxPulseEngine : public Engine {
     for (int i = 0; i < kHistorySize; ++i) dt_history_[i] = width_history_[i] = 0.0f;
   }
 
-  void render(const EngineParams& p, float* out, float* aux, size_t size) override {
+  PD_HOT void render(const EngineParams& p, float* out, float* aux, size_t size) override {
     chords_.set(p.harmonics);
     const float* ratios = chords_.ratios();
 
