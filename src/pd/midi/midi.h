@@ -165,7 +165,7 @@ inline int ccParam(uint8_t cc) {
 constexpr float kBendRange = 2.0f;   // semitones each way
 
 // Handler: noteOn(note, vel), noteOff(note), sustain(bool), param(p, 0..1),
-// bend(semitones), program(n), allOff(), tempo(bpm).
+// echoMix(0..1), bend(semitones), program(n), allOff(), tempo(bpm).
 class In {
  public:
   template <typename H>
@@ -176,6 +176,7 @@ class In {
       case 0xB0:
         if (m.d1 == 64) h.sustain(m.d2 >= 64);
         else if (m.d1 == 120 || m.d1 == 123) h.allOff();
+        else if (m.d1 == 91) h.echoMix((float)m.d2 * (1.0f / 127.0f));   // the usual effects-send CC
         else if (ccParam(m.d1) >= 0) h.param(ccParam(m.d1), (float)m.d2 * (1.0f / 127.0f));
         break;
       case 0xE0: {

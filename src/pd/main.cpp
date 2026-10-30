@@ -14,11 +14,15 @@
 // Hold one and the notes you play take its chord, re-strike at its rate, or
 // arpeggiate in its pattern (ui/arp.h). Double-tap a strip key to latch it;
 // tap it again to let go.
-// Tilt: while on, the device's attitude sets TIMBRE (side to side, 0 on its
-// left edge, 1 on its right) and MORPH (0 flat, 0.8 standing up, 1 tipped
-// past upright) directly (ui/tilt.h); switching off returns their set values.
+// Tilt: while on, the device's attitude drives two controls directly
+// (ui/tilt.h): side to side (0 on its left edge, 1 on its right) and front/
+// back (0 flat, 0.8 standing up, 1 tipped past upright), TIMBRE and MORPH by
+// default. Hold CTRL and tap a control's FN key to reroute an axis: the left
+// key of each pair takes side-to-side, the right front/back (z/x HARMONICS,
+// c/v TIMBRE, b/n MORPH, m/, MACRO, d/f echo feedback, s/g echo mix).
+// Switching tilt off returns the controls to their set values.
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
-// q/w root down/up a step, 9/0 tempo, E echo time (off/1/8/1/8./1/4), D/F echo feedback, ` / 1 octave, TAB previous surface,
+// q/w root down/up a step, 9/0 tempo, E echo time (off/1/8/1/8./1/4), D/F echo feedback, S/G echo mix, ` / 1 octave, TAB previous surface,
 // \ previous engine,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
 // take, up to 2.5 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
@@ -121,12 +125,19 @@ constexpr uint8_t kArpTag = kAllKeys + 4;                       // the arp's one
 static_assert(kArpTag < pd::Looper::kLoopTagOffset, "live tags must stay below the looper's");
 constexpr uint32_t kLatchTapMs = 300;                            // double-tap window
 
+// What a tilt axis can drive: the four controls (their Param ids) and the
+// echo's feedback and mix.
+enum TiltDest { kDestHarmonics, kDestTimbre, kDestMorph, kDestMacro, kDestEchoFb, kDestEchoMix, kNumDests };
+const char* const kDestNames[kNumDests] = {"HARMONICS", "TIMBRE", "MORPH", "MACRO", "ECHO FB", "ECHO MIX"};
+
 struct Ui {
   int   octave = 3;          // the surface root sits at MIDI 12 * (octave + 1) + root
   float root = 0.0f;         // semitones above C, 0..12, fractional off 12-EDO
   int   dacVol = kDacDefault;
   float params[(int)pd::Param::Count] = {0.0f, 0.75f, 0.0f, 0.5f};   // as set
-  float tiltVal[(int)pd::Param::Count] = {};   // tilt's TIMBRE and MORPH, while on
+  int   tiltDest[2] = {kDestTimbre, kDestMorph};   // what side-to-side and front/back drive
+  float tiltAxis[2] = {};      // their readings, 0..1, while tilt is on
+  bool  ctrlDown = false, ctrlUsed = false;   // CTRL held; a routing made while held
   float sent[(int)pd::Param::Count] = {-1.0f, -1.0f, -1.0f, -1.0f};  // last sent
   float undo[(int)pd::Param::Count] = {};
   bool  canUndo = false;
@@ -155,7 +166,8 @@ struct Ui {
   int8_t midiNote[kMidiKeys] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
   uint32_t midiSeen = 0;       // millis of the last MIDI message, for the status light
   int   echoDiv = -1;          // kEchoDivs index, -1 off
-  float echoFb = 0.45f;
+  float echoFb = 0.45f, echoMix = 0.35f;
+  float echoSent[2] = {-1.0f, -1.0f};   // feedback, mix as last sent
   bool  saveArm = false;       // FN+SHIFT held: digits save instead of load
   int   recKey = -1;           // key holding a recording, or -1
   uint32_t recStart = 0;
@@ -181,8 +193,15 @@ void emitLooped(const pd::Event& e) { g_events.push(e); }
 
 void flash(const char* m) { g_ui.msg = m; g_ui.msgUntil = millis() + 1500; g_ui.dirty = true; }
 
-bool tilted(int p) { return g_ui.tilt && (p == (int)pd::Param::Timbre || p == (int)pd::Param::Morph); }
-float effective(int p) { return tilted(p) ? g_ui.tiltVal[p] : g_ui.params[p]; }
+// The tilt axis driving `dest` (0 side-to-side, 1 front/back), or -1.
+int tiltAxisFor(int dest) {
+  if (!g_ui.tilt) return -1;
+  return g_ui.tiltDest[0] == dest ? 0 : g_ui.tiltDest[1] == dest ? 1 : -1;
+}
+bool tilted(int p) { return tiltAxisFor(p) >= 0; }
+float effective(int p) { const int a = tiltAxisFor(p); return a >= 0 ? g_ui.tiltAxis[a] : g_ui.params[p]; }
+float echoFbNow() { const int a = tiltAxisFor(kDestEchoFb); return a >= 0 ? 0.95f * g_ui.tiltAxis[a] : g_ui.echoFb; }
+float echoMixNow() { const int a = tiltAxisFor(kDestEchoMix); return a >= 0 ? g_ui.tiltAxis[a] : g_ui.echoMix; }
 
 // Send the controls (set value + tilt) that have moved since last sent.
 void pushParams() {
@@ -191,6 +210,13 @@ void pushParams() {
     if (std::fabs(v - g_ui.sent[p]) < 1.0f / 512.0f) continue;
     send(pd::EventType::Param, (uint8_t)p, 0, v);
     g_ui.sent[p] = v;
+    g_ui.dirty = true;
+  }
+  const float fx[2] = {echoFbNow(), echoMixNow()};
+  for (int i = 0; i < 2; ++i) {
+    if (std::fabs(fx[i] - g_ui.echoSent[i]) < 1.0f / 512.0f) continue;
+    send(pd::EventType::Echo, (uint8_t)(1 + i), 0, fx[i]);
+    g_ui.echoSent[i] = fx[i];
     g_ui.dirty = true;
   }
 }
@@ -218,7 +244,8 @@ float echoSeconds() {
 
 void sendEcho() {
   send(pd::EventType::Echo, 0, 0, echoSeconds());
-  send(pd::EventType::Echo, 1, 0, g_ui.echoFb);
+  g_ui.echoSent[0] = g_ui.echoSent[1] = -1.0f;   // and feedback and mix, as they stand
+  pushParams();
   g_ui.dirty = true;
 }
 
@@ -284,8 +311,8 @@ void toggleTilt() {
   if (!M5.Imu.isEnabled()) { flash("NO IMU"); return; }
   float a[3];
   readAccel(a);
-  g_ui.tiltVal[(int)pd::Param::Timbre] = pd::tilt::timbre(a[0], a[1], a[2]);   // start where it is,
-  g_ui.tiltVal[(int)pd::Param::Morph] = pd::tilt::morph(a[0], a[1], a[2]);     // no glide in
+  g_ui.tiltAxis[0] = pd::tilt::side(a[0], a[1], a[2]);    // start where it is,
+  g_ui.tiltAxis[1] = pd::tilt::front(a[0], a[1], a[2]);   // no glide in
   g_ui.tilt = true;
   pushParams();
   flash("TILT ON");
@@ -295,11 +322,37 @@ void serviceTilt() {
   if (!g_ui.tilt) return;
   float a[3];
   readAccel(a);
-  float& t = g_ui.tiltVal[(int)pd::Param::Timbre];
-  float& m = g_ui.tiltVal[(int)pd::Param::Morph];
-  t += 0.3f * (pd::tilt::timbre(a[0], a[1], a[2]) - t);   // ~30 ms smoothing at 100 Hz
-  m += 0.3f * (pd::tilt::morph(a[0], a[1], a[2]) - m);
+  float& s = g_ui.tiltAxis[0];
+  float& f = g_ui.tiltAxis[1];
+  s += 0.3f * (pd::tilt::side(a[0], a[1], a[2]) - s);    // ~30 ms smoothing at 100 Hz
+  f += 0.3f * (pd::tilt::front(a[0], a[1], a[2]) - f);
   pushParams();
+}
+
+// Hold CTRL and tap a control's key to put it on a tilt axis: each control
+// has a down/up pair, and the left key of the pair takes side-to-side, the
+// right one front/back. A control already on the other axis swaps over.
+bool tiltKey(char label, int* axis, int* dest) {
+  static constexpr char kKeys[] = "zxcvbnm,dfsg";
+  static constexpr int kDests[] = {kDestHarmonics, kDestTimbre, kDestMorph, kDestMacro, kDestEchoFb, kDestEchoMix};
+  const char* at = label ? strchr(kKeys, label) : nullptr;
+  if (!at) return false;
+  const int i = (int)(at - kKeys);
+  *axis = i & 1;
+  *dest = kDests[i >> 1];
+  return true;
+}
+
+void assignTilt(int axis, int dest) {
+  int& mine = g_ui.tiltDest[axis];
+  int& other = g_ui.tiltDest[1 - axis];
+  if (other == dest) other = mine;
+  mine = dest;
+  if (!g_ui.tilt) toggleTilt();
+  else pushParams();
+  static char msg[28];
+  snprintf(msg, sizeof msg, "%s: %s", axis ? "TILT FRONT" : "TILT SIDE", kDestNames[dest]);
+  flash(msg);
 }
 
 // --- notes, strips, sustain ---
@@ -532,6 +585,7 @@ struct MidiHandler {
     g_ui.dirty = true;
   }
   void allOff() { ::allOff(); }
+  void echoMix(float v) { g_ui.echoMix = v; pushParams(); }
   void tempo(float bpm) { if (std::fabs(bpm - g_ui.bpm) >= 0.5f) setTempo(std::round(bpm)); }
 };
 
@@ -611,6 +665,9 @@ pd::patch::Patch currentPatch() {
   memcpy(p.params, g_ui.params, sizeof p.params);
   snprintf(p.echo, sizeof p.echo, "%s", g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "OFF");
   p.echoFeedback = g_ui.echoFb;
+  p.echoMix = g_ui.echoMix;
+  snprintf(p.tiltSide, sizeof p.tiltSide, "%s", kDestNames[g_ui.tiltDest[0]]);
+  snprintf(p.tiltFront, sizeof p.tiltFront, "%s", kDestNames[g_ui.tiltDest[1]]);
   return p;
 }
 
@@ -626,6 +683,13 @@ void applyPatch(const pd::patch::Patch& p) {
   g_ui.echoDiv = -1;
   for (int i = 0; i < kNumEchoDivs; ++i) if (!strcmp(p.echo, kEchoDivs[i].label)) g_ui.echoDiv = i;
   g_ui.echoFb = pd::clamp(p.echoFeedback, 0.0f, 0.95f);
+  g_ui.echoMix = pd::clamp(p.echoMix, 0.0f, 1.0f);
+  int side = kDestTimbre, front = kDestMorph;
+  for (int i = 0; i < kNumDests; ++i) {
+    if (!strcmp(p.tiltSide, kDestNames[i])) side = i;
+    if (!strcmp(p.tiltFront, kDestNames[i])) front = i;
+  }
+  if (side != front) { g_ui.tiltDest[0] = side; g_ui.tiltDest[1] = front; }
   sendEcho();
   send(pd::EventType::Engine, (uint8_t)g_ui.engine);
   pushParams();
@@ -707,6 +771,14 @@ uint32_t fnAction(char label) {
       flash(msg);
       return 80;
     }
+    case 's': case 'g': {   // echo mix
+      g_ui.echoMix = pd::clamp(g_ui.echoMix + (label == 'g' ? 0.05f : -0.05f), 0.0f, 1.0f);
+      pushParams();
+      static char msg[24];
+      snprintf(msg, sizeof msg, "ECHO MIX %.0f%%", g_ui.echoMix * 100.0f);
+      flash(msg);
+      return 80;
+    }
     case '9': setTempo(g_ui.bpm - 2.0f); return 60;
     case '0': setTempo(g_ui.bpm + 2.0f); return 60;
     case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 7); g_ui.dirty = true; return 0;
@@ -750,6 +822,11 @@ void onKey(int r, int c, bool pressed) {
     return;
   }
   if (r == 3 && c == 13) { setSustain(pressed); return; }   // SPACE
+  if (r == 3 && c == 0) {   // CTRL: a tap toggles tilt; held, it routes tilt (tiltKey)
+    if (pressed) { g_ui.ctrlDown = true; g_ui.ctrlUsed = false; }
+    else { g_ui.ctrlDown = false; if (!g_ui.ctrlUsed) toggleTilt(); }
+    return;
+  }
   if (!pressed) {
     if (r == 2 && c == 1) g_ui.saveArm = false;   // SHIFT
     if (g_ui.repeat.label && g_ui.repeat.row == r && g_ui.repeat.col == c) g_ui.repeat.label = 0;
@@ -761,6 +838,11 @@ void onKey(int r, int c, bool pressed) {
     }
     releaseKey(k);
     return;
+  }
+
+  if (g_ui.ctrlDown) {
+    int axis, dest;
+    if (tiltKey(pd::keymap::kLabel[r][c], &axis, &dest)) { g_ui.ctrlUsed = true; assignTilt(axis, dest); return; }
   }
 
   if (g_ui.fn) {
@@ -784,7 +866,6 @@ void onKey(int r, int c, bool pressed) {
     switch (r) {
       case 0: g_ui.diceHeld = true; g_ui.diceDone = false; g_ui.diceDown = millis(); return;
       case 1: g_ui.surface = (g_ui.surface + 1) % pd::surface::kNumSurfaces; g_ui.dirty = true; return;
-      case 3: toggleTilt(); return;
       default: return;
     }
   }
@@ -880,7 +961,9 @@ void draw(const pd::audio::Stats& s) {
     d.printf("%.1fs/%d", (float)take.length() / pd::SampleStore::kRate, take.slices());
   }
   d.setCursor(170, 24);
-  d.setTextColor(g_ui.echoDiv >= 0 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  // Cyan while tilt drives the echo, green while it's on, grey off.
+  const bool echoTilted = tiltAxisFor(kDestEchoFb) >= 0 || tiltAxisFor(kDestEchoMix) >= 0;
+  d.setTextColor(echoTilted ? TFT_CYAN : g_ui.echoDiv >= 0 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
   d.printf("E%s", g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "--");
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(206, 24);
@@ -965,11 +1048,12 @@ void cpuBench() {
 }
 
 void printState(const pd::audio::Stats& s) {
-  Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(t%.2f,m%.2f) voices=%d "
+  Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(%s=%.2f,%s=%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
                 "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f heap=%lu/%lu\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
-                g_ui.sustain, g_ui.tilt, effective(1), effective(2), g_synth.activeVoices(),
+                g_ui.sustain, g_ui.tilt, kDestNames[g_ui.tiltDest[0]], g_ui.tiltAxis[0],
+                kDestNames[g_ui.tiltDest[1]], g_ui.tiltAxis[1], g_synth.activeVoices(),
                 (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
                 (unsigned long)(s.loadPeakPermil / 10), (unsigned long)(s.loadPeakPermil % 10),
                 (unsigned long)s.lateWrites, (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave, g_ui.root, g_ui.bpm,

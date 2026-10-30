@@ -21,6 +21,9 @@ struct Patch {
   float params[4] = {0.0f, 0.75f, 0.0f, 0.5f};   // harmonics timbre morph macro
   char  echo[8] = "OFF";                         // echo time: OFF, 1/8, 1/8., 1/4
   float echoFeedback = 0.45f;
+  float echoMix = 0.35f;
+  char  tiltSide[12] = "TIMBRE";                 // what each tilt axis drives
+  char  tiltFront[12] = "MORPH";
 };
 
 constexpr const char* kParamKeys[4] = {"harmonics", "timbre", "morph", "macro"};
@@ -31,11 +34,11 @@ inline int toText(const Patch& p, char* buf, size_t n) {
                   "pocketdynamo patch 1\n"
                   "engine=%s\nsurface=%s\noctave=%d\nroot=%.4f\nbpm=%.1f\n"
                   "%s=%.4f\n%s=%.4f\n%s=%.4f\n%s=%.4f\n"
-                  "echo=%s\necho_fb=%.3f\n",
+                  "echo=%s\necho_fb=%.3f\necho_mix=%.3f\ntilt_side=%s\ntilt_front=%s\n",
                   p.engine, p.surface, p.octave, p.root, p.bpm,
                   kParamKeys[0], p.params[0], kParamKeys[1], p.params[1],
                   kParamKeys[2], p.params[2], kParamKeys[3], p.params[3],
-                  p.echo, p.echoFeedback);
+                  p.echo, p.echoFeedback, p.echoMix, p.tiltSide, p.tiltFront);
 }
 
 // Parses what toText wrote (or a hand edit of it). False if it isn't a patch.
@@ -63,6 +66,9 @@ inline bool fromText(const char* text, Patch* out) {
       else if (!strcmp(l, "bpm")) p.bpm = (float)atof(v);
       else if (!strcmp(l, "echo")) copy(p.echo, sizeof p.echo);
       else if (!strcmp(l, "echo_fb")) p.echoFeedback = (float)atof(v);
+      else if (!strcmp(l, "echo_mix")) p.echoMix = (float)atof(v);
+      else if (!strcmp(l, "tilt_side")) copy(p.tiltSide, sizeof p.tiltSide);
+      else if (!strcmp(l, "tilt_front")) copy(p.tiltFront, sizeof p.tiltFront);
       else for (int i = 0; i < 4; ++i) if (!strcmp(l, kParamKeys[i])) p.params[i] = (float)atof(v);
     }
     line += len + (end ? 1 : 0);

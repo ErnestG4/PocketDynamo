@@ -17,7 +17,7 @@ the root. The two outer columns are controls:
 | `` ` `` | **dice**: tap to nudge the controls, hold ½ s to roll new ones | `del` | **strip**: NOTES → CHORD → RATCHET → ARP |
 | `tab` | next **surface** | `\` | next **engine** |
 | `fn` | function layer | `enter` | all notes off |
-| `ctrl` | **tilt** on/off | `space` | **sustain pedal** |
+| `ctrl` | **tilt**: tap for on/off, hold + a control key to route it | `space` | **sustain pedal** |
 
 The keys aren't velocity-sensitive, and all notes play at one level. Releasing a
 key starts its engine's release: short for the buzzers and stabs, about 3 s
@@ -68,11 +68,29 @@ the ARP's pool.
 
 ### Tilt (`ctrl`)
 
-While tilt is on, the device's angle sets two controls directly:
-- **TIMBRE (side to side):** 0 on its left edge, 1 on its right.
-- **MORPH (front/back):** 0 flat, 0.8 standing up, 1 tipped past upright.
+Tap `ctrl` to switch tilt on or off. While it's on, the device's angle sets
+two controls directly:
+- **Side to side:** 0 on its left edge, 1 on its right. TIMBRE by default.
+- **Front/back:** 0 flat, 0.8 standing up, 1 tipped past upright. MORPH by
+  default.
 
-Their bars turn green. Switching tilt off returns them to their set values.
+**Choosing what tilt drives:** hold `ctrl` and tap a control's FN key. Each
+control has a down/up pair; the left key of the pair puts it on side-to-side,
+the right key on front/back:
+
+| Hold `ctrl` + | side to side | front/back |
+|---|---|---|
+| HARMONICS | `z` | `x` |
+| TIMBRE | `c` | `v` |
+| MORPH | `b` | `n` |
+| MACRO | `m` | `,` |
+| echo feedback | `d` | `f` |
+| echo mix | `s` | `g` |
+
+Routing a control switches tilt on. A control already on the other axis
+swaps over. Tilted bars turn green, and the echo label turns cyan while tilt
+drives the echo. Switching tilt off returns everything to its set value. A
+patch saves the routing (not whether tilt is on).
 
 ### Dice (`` ` ``)
 
@@ -93,6 +111,7 @@ Their bars turn green. Switching tilt off returns them to their set values.
 | `9` / `0` | tempo, 40–300 bpm |
 | `e` | **echo** time: off → 1/8 → dotted 1/8 → 1/4 → off |
 | `d` / `f` | echo feedback down / up. Hold to repeat |
+| `s` / `g` | echo mix down / up. Hold to repeat |
 | `tab` / `\` | previous surface / previous engine |
 | `del` | undo / redo the last dice |
 | `r` (hold) | **record** from the mic into the take |
@@ -117,14 +136,13 @@ Their bars turn green. Switching tilt off returns them to their set values.
 
 A tape echo on everything you play, synced to the tempo. FN+`e` steps the
 time through 1/8, dotted 1/8 and 1/4, then off; FN+`d`/`f` set how long the
-repeats go on. Its tape is 0.6 s long: at slow tempos a time that won't fit
+repeats go on, and FN+`s`/`g` how loud they are. Both can go on tilt. Its tape is 0.6 s long: at slow tempos a time that won't fit
 halves until it does. It behaves like tape:
 - Repeats get darker, thinner and grittier as they come round.
 - A change of tempo or time bends the repeats as the head glides.
 - Switching it off stops new sound reaching the tape, but the tail rings out.
 
-The echo setting and its feedback are saved with a patch. The mix is fixed at
-a level that sits behind the dry sound. The status line shows `E` and the
+The echo's time, feedback and mix are saved with a patch. The status line shows `E` and the
 time, green while the echo is on.
 
 ## The take (FN+`r`)
@@ -152,8 +170,8 @@ ratchet output, control sweeps and engine changes.
 
 ## Patches (FN+`2`…`8`)
 
-A patch saves the engine, surface, root, octave, tempo, the four controls and
-the echo, plus the take. It doesn't save the strip, tilt or volume.
+A patch saves the engine, surface, root, octave, tempo, the four controls, the
+echo and the tilt routing, plus the take. It doesn't save the strip, tilt or volume.
 - Patches are plain `key=value` text in `/pocketdynamo/pN.txt` on the SD card,
   so you can edit them by hand. The take goes alongside as `pN.wav`.
 - Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, resampled to
@@ -182,6 +200,7 @@ PocketDynamo listens for MIDI two ways, both at once, on every channel:
 - **The four controls:** CC 16–19 are HARMONICS, TIMBRE, MORPH and MACRO.
   The usual performance CCs land on them too: 71 (resonance) HARMONICS,
   74 (brightness) TIMBRE, 1 (mod wheel) MORPH, 2 (breath) MACRO.
+- **CC 91** (the usual effects send) is the echo mix.
 - **Pitch bend** bends everything ±2 semitones.
 - **Program change** 0–6 picks the engine (in the `\` order).
 - **MIDI clock** sets the tempo, so the arp, ratchets, BREAK and the looper
