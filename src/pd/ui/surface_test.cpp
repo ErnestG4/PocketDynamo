@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <set>
 
 using namespace pd;
 using namespace pd::surface;
@@ -20,6 +21,7 @@ const Surface& byName(const char* n) {
 
 int main() {
   for (const auto& s : kSurfaces) {
+    if (s.kind != Kind::Edo) continue;   // the ratio surfaces have their own tests below
     // Every note column of every row plays, except the piano's gaps; control
     // columns never do. Pitch rises left to right on every grid row.
     for (int r = 0; r < 4; ++r) {
@@ -86,12 +88,60 @@ int main() {
   // degreeOf inverts degreeSemitones on every surface, and finds nothing
   // between the keys.
   for (const auto& s : kSurfaces)
-    for (int d = -20; d <= 40; ++d) check(degreeOf(s, degreeSemitones(s, d)) == d, "degreeOf round-trips");
+    if (s.kind == Kind::Edo)
+      for (int d = -20; d <= 40; ++d) check(degreeOf(s, degreeSemitones(s, d)) == d, "degreeOf round-trips");
   check(degreeOf(byName("MAJOR 4THS"), 1.0f) == kNoDegree, "C# is off C major");
   check(degreeOf(byName("MAJOR 4THS"), -1.0f) == -1, "B below the root is degree -1");
   check(degreeOf(byName("PENTA 4THS"), 15.0f) == 6, "Eb an octave up in minor pentatonic");
   check(degreeOf(byName("49 SUPERPYTH"), 7.0f) == kNoDegree, "a 12-EDO fifth is off the 49 grid");
   check(degreeOf(byName("CHROMA 4THS"), 13.0f) == 13, "chromatic: every semitone");
   printf("degreeOf ok\n");
+
+  // STERN-BROCOT: 48 distinct ratios in [1, 2), each row ascending, the
+  // bottom row the just scale 1/1 .. 9/5, all in lowest terms.
+  {
+    const Surface& sb = byName("STERN-BROCOT");
+    std::set<std::pair<int, int>> seen;
+    const int bottom[12][2] = {{1, 1}, {6, 5}, {5, 4}, {9, 7}, {4, 3}, {7, 5}, {10, 7}, {3, 2}, {8, 5}, {5, 3}, {7, 4}, {9, 5}};
+    for (int r = 0; r < 4; ++r)
+      for (int c = 1; c <= 12; ++c) {
+        const Ratio q = brocotRatio(r, c);
+        int a = q.p, b = q.q;
+        while (b) { const int t = a % b; a = b; b = t; }
+        check(a == 1 && q.p >= q.q && q.p < 2 * q.q, "Brocot: lowest terms, in [1, 2)");
+        seen.insert({q.p, q.q});
+        if (c > 1) check(ratioKey(sb, r, c) > ratioKey(sb, r, c - 1), "Brocot: rows ascend");
+        if (r == 3) check(q.p == bottom[c - 1][0] && q.q == bottom[c - 1][1], "Brocot: the bottom row is the simple just scale");
+      }
+    check(seen.size() == 48, "Brocot: 48 different ratios");
+    check(near(ratioKey(sb, 3, 8), 12.0f * std::log2(1.5f)), "Brocot: 3/2 is a pure fifth");
+    check(ratioKey(sb, 3, 0) == kNoPitch && keyDegree(sb, 3, 5) == kNoDegree, "Brocot: no degrees, controls stay controls");
+  }
+  // 5THS PYTHAG: neighbours a pure fifth apart (mod the octave), and each
+  // row up the same twelve a Pythagorean comma sharp, an octave higher.
+  {
+    const Surface& f = byName("5THS PYTHAG");
+    for (int r = 0; r < 4; ++r)
+      for (int c = 2; c <= 12; ++c) {
+        float d = std::fmod(ratioKey(f, r, c) - ratioKey(f, r, c - 1) + 120.0f, 12.0f);
+        check(near(d, 7.01955f) || near(d, 7.01955f - 12.0f + 12.0f), "5ths: neighbours a pure fifth apart");
+      }
+    for (int c = 1; c <= 12; ++c)
+      check(near(ratioKey(f, 2, c) - ratioKey(f, 3, c), 12.2346f), "5ths: a row up is an octave and a comma");
+  }
+  // IMPRESSION: the root plays itself; lines are single notes, diagonals
+  // two; right is brighter than left; rings past the third alias an octave up.
+  {
+    float a[2], b[2];
+    check(impression(0, 0, a) == 1 && a[0] == 0.0f, "impression: the root key plays the root");
+    check(impression(0, 1, a) == 1 && near(a[0], 386.3f), "impression: one right is a just major third");
+    check(impression(0, -1, a) == 1 && near(a[0], 315.6f), "impression: one left is a just minor third");
+    check(impression(1, 1, a) == 2 && impression(-1, -1, b) == 2, "impression: diagonals are shapes");
+    impression(0, 1, a); impression(0, 4, b);
+    check(near(b[0], a[0] + 1200.0f), "impression: ring 4 aliases ring 1, an octave up");
+    impression(2, 0, a); impression(5, 0, b);
+    check(near(b[0], a[0] + 1200.0f), "impression: ring 5 aliases ring 2, an octave up");
+  }
+  printf("ratio surfaces ok\n");
   return 0;
 }

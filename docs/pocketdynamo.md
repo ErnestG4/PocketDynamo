@@ -34,7 +34,8 @@ release: short for the buzzers and stabs, about 3 s for MODAL, so bells ring.
 ### Layouts (`tab`, FN+`tab` back)
 
 Most layouts are isomorphic: one column right is one scale step, and one row
-up is a fourth. A shape you learn plays the same anywhere on the grid.
+up is a fourth. A shape you learn plays the same anywhere on the grid. The
+last three leave the usual tuning behind for pure ratios.
 
 | Layout | |
 |---|---|
@@ -45,6 +46,23 @@ up is a fourth. A shape you learn plays the same anywhere on the grid.
 | 49 SUPERPYTH | A major scale in 49 equal steps per octave: wide whole tones, narrow half steps, a major third near 9/7. |
 | 49 7x7 | 7 equal steps across a row, each row one 49th of an octave sharper, so shapes across rows shimmer. |
 | 49 CHROMA | Every 49-step pitch in order, about an octave across the keyboard. |
+| 5THS PYTHAG | Pure 3:2 fifths: each key a fifth from its neighbour, so any cluster is open fifths and fourths. A row holds the 12 notes of the fifths chain; each row up continues it an octave higher, a little sharper (a Pythagorean comma), so a shape on two rows shimmers. |
+| STERN-BROCOT | Pure ratios of the root from the Stern-Brocot tree. The bottom row is the simplest twelve, a just scale: 1/1 6/5 5/4 9/7 4/3 7/5 10/7 3/2 8/5 5/3 7/4 9/5. Each row up is the next twelve, a level deeper and stranger, in the same octave. The screen shows each key's ratio. |
+| IMPRESSION | The first key you press is the root. While it's held, every other key plays what its place suggests (see below). |
+
+**IMPRESSION.** Hold a root, then reach around it. Keys in pure intervals of
+the root light up in each direction:
+- **Right** brightens it: a major third, a major seventh, a ninth.
+- **Left** darkens it: a minor third, a soft seventh, an eleventh.
+- **Up** opens it: a fifth, an octave, a twelfth.
+- **Down** goes below it.
+- **The diagonals** play two-note shapes: major colours up and right, minor
+  up and left, suspended down and right, and soft septimal ones down and left.
+
+Each direction has three steps; keys farther out wrap around to the same
+colours an octave higher, so whatever you reach for sounds right with the
+root. Let go of every key and the next one you press is a new root. CHORD
+works on the root key.
 
 ### Strips (`del`)
 

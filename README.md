@@ -14,6 +14,7 @@ An 8-voice old-school synth for the **M5Stack Cardputer ADV**.
   - wavefolding, ring mod and tremolo
 - **A keyboard laid out for playing:**
   - scale-locked layouts, a chromatic one, and 49-step tunings
+  - pure-ratio layouts: a chain of pure fifths, the Stern-Brocot tree, and IMPRESSION, where the first key you hold is a root and every other key plays a colour of it
   - CHORD, RATCHET and ARP strips
 - **Tilt** that can play any control or effect.
 - **MIDI in** over USB and Bluetooth.

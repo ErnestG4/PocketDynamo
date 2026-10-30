@@ -174,6 +174,8 @@ struct Ui {
   bool  sustained[kAllKeys] = {};   // ...only because the pedal is down
   bool  physical[kAllKeys] = {};    // key is physically down (and played a note)
   uint32_t ratchetNext[kAllKeys] = {};   // micros of the next strike
+  int   impRoot = -1;          // IMPRESSION: the key holding the root, or -1
+  float impRootPitch = 0.0f;
   int8_t midiNote[kMidiKeys] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
   uint32_t midiSeen = 0;       // millis of the last MIDI message, for the status light
   int   echoDiv = -1;          // kEchoDivs index, -1 off
@@ -545,6 +547,54 @@ void playKey(int k, int degree, uint8_t vel = kVelocity) {
   startKey(k, pitches, n, vel);
 }
 
+// --- the ratio surfaces and IMPRESSION (ui/surface.h) ---
+
+// 5THS PYTHAG and STERN-BROCOT: each key a ratio of the root. CHORD stacks
+// the plain chord shapes (in cents) on it.
+void playRatioKey(int k, int r, int c) {
+  const float semis = pd::surface::ratioKey(surf(), r, c);
+  if (semis == pd::surface::kNoPitch) return;
+  const float note = surfaceBase() + semis;
+  float pitches[pd::surface::kMaxChordNotes] = {pd::clamp(note, 0.0f, 127.0f)};
+  int n = 1;
+  if (chording()) {
+    const auto& ch = pd::surface::kCentChords[g_ui.slot];
+    n = ch.n;
+    for (int i = 0; i < n; ++i) pitches[i] = pd::clamp(note + ch.v[i] * 0.01f, 0.0f, 127.0f);
+  }
+  startKey(k, pitches, n, kVelocity);
+  if (surf().kind == pd::surface::Kind::Brocot) {
+    const auto q = pd::surface::brocotRatio(r, c);
+    static char msg[12];
+    snprintf(msg, sizeof msg, "%u/%u", q.p, q.q);
+    flash(msg);
+  }
+}
+
+bool noteKeysHeld(int except) {
+  for (int k = 0; k < kKeys; ++k)
+    if (k != except && g_ui.physical[k]) return true;
+  return false;
+}
+
+// IMPRESSION: the first key (nothing else held) is the root and plays as on
+// CHROMA 4THS; every other key plays what its place relative to the root
+// suggests, in just intonation; letting go of every key frees the root.
+void playImpressionKey(int k, int r, int c, int degree) {
+  if (g_ui.impRoot < 0 || !noteKeysHeld(k)) {
+    g_ui.impRoot = k;
+    playKey(k, degree);
+    g_ui.impRootPitch = g_ui.pitch[k];
+    return;
+  }
+  const int rootRow = g_ui.impRoot / kCols, rootCol = g_ui.impRoot % kCols;
+  float cents[2];
+  const int n = pd::surface::impression(rootRow - r, c - rootCol, cents);
+  float pitches[2];
+  for (int i = 0; i < n; ++i) pitches[i] = pd::clamp(g_ui.impRootPitch + cents[i] * 0.01f, 0.0f, 127.0f);
+  startKey(k, pitches, n, kVelocity);
+}
+
 void releaseKey(int k) {
   g_ui.physical[k] = false;
   if (!g_ui.sounding[k]) return;
@@ -892,6 +942,7 @@ void onKey(int r, int c, bool pressed) {
       g_ui.diceHeld = false;
     }
     releaseKey(k);
+    if (g_ui.impRoot >= 0 && !noteKeysHeld(-1)) g_ui.impRoot = -1;   // IMPRESSION: all keys up
     return;
   }
 
@@ -943,8 +994,11 @@ void onKey(int r, int c, bool pressed) {
 
   if (r == 0 && g_ui.strip != Strip::Notes) { pressSlot(k, c - 1); return; }
 
+  const auto kind = surf().kind;
+  if (kind == pd::surface::Kind::Fifths || kind == pd::surface::Kind::Brocot) { playRatioKey(k, r, c); return; }
   const int degree = pd::surface::keyDegree(surf(), r, c);
   if (degree == pd::surface::kNoDegree) return;
+  if (kind == pd::surface::Kind::Impression) { playImpressionKey(k, r, c, degree); return; }
   playKey(k, degree);
 }
 
