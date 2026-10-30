@@ -19,6 +19,8 @@ struct Patch {
   float root = 0.0f;
   float bpm = 120.0f;
   float params[4] = {0.0f, 0.75f, 0.0f, 0.5f};   // harmonics timbre morph macro
+  char  echo[8] = "OFF";                         // echo time: OFF, 1/8, 1/8., 1/4
+  float echoFeedback = 0.45f;
 };
 
 constexpr const char* kParamKeys[4] = {"harmonics", "timbre", "morph", "macro"};
@@ -28,10 +30,12 @@ inline int toText(const Patch& p, char* buf, size_t n) {
   return snprintf(buf, n,
                   "pocketdynamo patch 1\n"
                   "engine=%s\nsurface=%s\noctave=%d\nroot=%.4f\nbpm=%.1f\n"
-                  "%s=%.4f\n%s=%.4f\n%s=%.4f\n%s=%.4f\n",
+                  "%s=%.4f\n%s=%.4f\n%s=%.4f\n%s=%.4f\n"
+                  "echo=%s\necho_fb=%.3f\n",
                   p.engine, p.surface, p.octave, p.root, p.bpm,
                   kParamKeys[0], p.params[0], kParamKeys[1], p.params[1],
-                  kParamKeys[2], p.params[2], kParamKeys[3], p.params[3]);
+                  kParamKeys[2], p.params[2], kParamKeys[3], p.params[3],
+                  p.echo, p.echoFeedback);
 }
 
 // Parses what toText wrote (or a hand edit of it). False if it isn't a patch.
@@ -57,6 +61,8 @@ inline bool fromText(const char* text, Patch* out) {
       else if (!strcmp(l, "octave")) p.octave = atoi(v);
       else if (!strcmp(l, "root")) p.root = (float)atof(v);
       else if (!strcmp(l, "bpm")) p.bpm = (float)atof(v);
+      else if (!strcmp(l, "echo")) copy(p.echo, sizeof p.echo);
+      else if (!strcmp(l, "echo_fb")) p.echoFeedback = (float)atof(v);
       else for (int i = 0; i < 4; ++i) if (!strcmp(l, kParamKeys[i])) p.params[i] = (float)atof(v);
     }
     line += len + (end ? 1 : 0);

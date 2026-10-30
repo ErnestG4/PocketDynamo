@@ -24,6 +24,10 @@ int main() {
   Patch c;
   check(fromText("pocketdynamo patch 1\r\nbpm=90\r\nwhatever=3\r\n", &c), "CRLF and unknown keys");
   check(c.bpm == 90.0f && !strcmp(c.engine, "ZX PULSE"), "missing keys keep defaults");
+  check(!strcmp(c.echo, "OFF"), "a patch from before the echo loads with it off");
+  Patch d; snprintf(d.echo, sizeof d.echo, "1/8."); d.echoFeedback = 0.6f;
+  char t[512]; toText(d, t, sizeof t);
+  Patch e; check(fromText(t, &e) && !strcmp(e.echo, "1/8.") && std::fabs(e.echoFeedback - 0.6f) < 1e-3f, "echo round-trips");
   check(!fromText("hello", &c), "not a patch");
 
   uint8_t h[kWavHeader];

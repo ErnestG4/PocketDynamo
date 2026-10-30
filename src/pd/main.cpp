@@ -18,7 +18,7 @@
 // left edge, 1 on its right) and MORPH (0 flat, 0.8 standing up, 1 tipped
 // past upright) directly (ui/tilt.h); switching off returns their set values.
 // FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
-// q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
+// q/w root down/up a step, 9/0 tempo, E echo time (off/1/8/1/8./1/4), D/F echo feedback, ` / 1 octave, TAB previous surface,
 // \ previous engine,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
 // take, up to 2.5 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
@@ -67,6 +67,7 @@ constexpr int kVoices = 8;
 using Synth = pd::Instrument<kVoices, pd::audio::kBlock>;
 
 Synth g_synth;
+pd::TapeEcho g_echo;   // the master bus's, outside the pool so a bench pool stays small
 pd::SpscQueue<128> g_events;
 pd::Looper g_looper;
 
@@ -153,6 +154,8 @@ struct Ui {
   uint32_t ratchetNext[kAllKeys] = {};   // micros of the next strike
   int8_t midiNote[kMidiKeys] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
   uint32_t midiSeen = 0;       // millis of the last MIDI message, for the status light
+  int   echoDiv = -1;          // kEchoDivs index, -1 off
+  float echoFb = 0.45f;
   bool  saveArm = false;       // FN+SHIFT held: digits save instead of load
   int   recKey = -1;           // key holding a recording, or -1
   uint32_t recStart = 0;
@@ -199,9 +202,30 @@ void nudgeParam(pd::Param p, float d) {
   g_ui.dirty = true;
 }
 
+// --- echo: tempo-synced tape echo on the master bus (dsp/echo.h) ---
+
+struct EchoDiv { const char* label; float beats; };
+constexpr EchoDiv kEchoDivs[] = {{"1/8", 0.5f}, {"1/8.", 0.75f}, {"1/4", 1.0f}};
+constexpr int kNumEchoDivs = sizeof kEchoDivs / sizeof kEchoDivs[0];
+
+// The time for the division at this tempo, halved until it fits the tape.
+float echoSeconds() {
+  if (g_ui.echoDiv < 0) return 0.0f;
+  float s = 60.0f / g_ui.bpm * kEchoDivs[g_ui.echoDiv].beats;
+  while (s > pd::TapeEcho::kMaxSeconds) s *= 0.5f;
+  return s;
+}
+
+void sendEcho() {
+  send(pd::EventType::Echo, 0, 0, echoSeconds());
+  send(pd::EventType::Echo, 1, 0, g_ui.echoFb);
+  g_ui.dirty = true;
+}
+
 void setTempo(float bpm) {
   g_ui.bpm = pd::clamp(bpm, 40.0f, 300.0f);
   send(pd::EventType::Tempo, 0, 0, g_ui.bpm);
+  if (g_ui.echoDiv >= 0) send(pd::EventType::Echo, 0, 0, echoSeconds());
   g_ui.dirty = true;
 }
 
@@ -585,6 +609,8 @@ pd::patch::Patch currentPatch() {
   p.root = g_ui.root;
   p.bpm = g_ui.bpm;
   memcpy(p.params, g_ui.params, sizeof p.params);
+  snprintf(p.echo, sizeof p.echo, "%s", g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "OFF");
+  p.echoFeedback = g_ui.echoFb;
   return p;
 }
 
@@ -597,6 +623,10 @@ void applyPatch(const pd::patch::Patch& p) {
   g_ui.root = pd::clamp(p.root, 0.0f, 11.999f);
   setTempo(p.bpm);
   for (int i = 0; i < 4; ++i) g_ui.params[i] = pd::clamp(p.params[i], 0.0f, 1.0f);
+  g_ui.echoDiv = -1;
+  for (int i = 0; i < kNumEchoDivs; ++i) if (!strcmp(p.echo, kEchoDivs[i].label)) g_ui.echoDiv = i;
+  g_ui.echoFb = pd::clamp(p.echoFeedback, 0.0f, 0.95f);
+  sendEcho();
   send(pd::EventType::Engine, (uint8_t)g_ui.engine);
   pushParams();
   g_ui.dirty = true;
@@ -660,6 +690,23 @@ uint32_t fnAction(char label) {
     case ']': setDac(g_ui.dacVol + 6); return 150;
     case 'q': nudgeRoot(-1); return 150;
     case 'w': nudgeRoot(+1); return 150;
+    case 'e': {   // echo time: off -> 1/8 -> 1/8. -> 1/4 -> off
+      g_ui.echoDiv = g_ui.echoDiv + 1 >= kNumEchoDivs ? -1 : g_ui.echoDiv + 1;
+      sendEcho();
+      static char msg[24];
+      if (g_ui.echoDiv < 0) snprintf(msg, sizeof msg, "ECHO OFF");
+      else snprintf(msg, sizeof msg, "ECHO %s  %.0f ms", kEchoDivs[g_ui.echoDiv].label, echoSeconds() * 1000.0f);
+      flash(msg);
+      return 0;
+    }
+    case 'd': case 'f': {   // echo feedback
+      g_ui.echoFb = pd::clamp(g_ui.echoFb + (label == 'f' ? 0.05f : -0.05f), 0.0f, 0.95f);
+      sendEcho();
+      static char msg[24];
+      snprintf(msg, sizeof msg, "ECHO FEEDBACK %.0f%%", g_ui.echoFb * 100.0f);
+      flash(msg);
+      return 80;
+    }
     case '9': setTempo(g_ui.bpm - 2.0f); return 60;
     case '0': setTempo(g_ui.bpm + 2.0f); return 60;
     case '`': g_ui.octave = pd::clamp(g_ui.octave - 1, 0, 7); g_ui.dirty = true; return 0;
@@ -832,9 +879,12 @@ void draw(const pd::audio::Stats& s) {
     d.setTextColor(TFT_DARKGREY, TFT_BLACK);
     d.printf("%.1fs/%d", (float)take.length() / pd::SampleStore::kRate, take.slices());
   }
-  d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(170, 24);
-  d.printf("cpu %lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
+  d.setTextColor(g_ui.echoDiv >= 0 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  d.printf("E%s", g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "--");
+  d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  d.setCursor(206, 24);
+  d.printf("%lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
   d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   drawBar(36, "HARMONICS", 0);
   drawBar(52, "TIMBRE", 1);
@@ -917,7 +967,7 @@ void cpuBench() {
 void printState(const pd::audio::Stats& s) {
   Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(t%.2f,m%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
-                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d heap=%lu/%lu\n",
+                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f heap=%lu/%lu\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
                 g_ui.sustain, g_ui.tilt, effective(1), effective(2), g_synth.activeVoices(),
                 (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
@@ -925,7 +975,8 @@ void printState(const pd::audio::Stats& s) {
                 (unsigned long)s.lateWrites, (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave, g_ui.root, g_ui.bpm,
                 effective(0), effective(1), effective(2), effective(3),
                 pd::sampleStore().ready() ? (float)pd::sampleStore().length() / pd::SampleStore::kRate : 0.0f,
-                pd::sampleStore().slices(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
+                pd::sampleStore().slices(), g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "off", g_ui.echoFb,
+                (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
 }
 
 int hexDigit(int ch) {
@@ -1006,6 +1057,7 @@ void setup() {
   const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
   const bool keysOk = pd::keys::begin();
   pd::sineTable();   // build the shared table now, not inside the first FM note's block
+  g_synth.setEcho(&g_echo);   // before audio starts: the render task reads it
   const bool audioOk = pd::audio::begin(render);
   const bool sdOk = pd::storage::begin();
   pd::usbmidi::begin();

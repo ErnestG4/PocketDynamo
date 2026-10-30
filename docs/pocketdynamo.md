@@ -91,6 +91,8 @@ Their bars turn green. Switching tilt off returns them to their set values.
 | `` ` `` / `1` | octave down / up |
 | `q` / `w` | root down / up one step of the current tuning (a semitone, or 1/49 octave on 49 surfaces) |
 | `9` / `0` | tempo, 40–300 bpm |
+| `e` | **echo** time: off → 1/8 → dotted 1/8 → 1/4 → off |
+| `d` / `f` | echo feedback down / up. Hold to repeat |
 | `tab` / `\` | previous surface / previous engine |
 | `del` | undo / redo the last dice |
 | `r` (hold) | **record** from the mic into the take |
@@ -110,6 +112,20 @@ Their bars turn green. Switching tilt off returns them to their set values.
 | **SAMPLE**: the take as a varispeed record | slice (or start point) | length, 20 ms → the rest of the take | forward, loop, ping-pong, reverse | tape-dull / SP grit |
 | **CLOUD**: the take as a granular cloud | where in the take | grain size, 15 → 400 ms | timing: CHIP, SILK, MOTIF, LOOSE, CLUMP | density, 2 → 120 grains/s |
 | **BREAK**: the take as a one-bar break, cut up live | chop: verbatim → DJ edit → chops → rolls → micro bursts | which of 32 patterns | gate length | tape-dull / SP grit |
+
+## The echo (FN+`e`)
+
+A tape echo on everything you play, synced to the tempo. FN+`e` steps the
+time through 1/8, dotted 1/8 and 1/4, then off; FN+`d`/`f` set how long the
+repeats go on. Its tape is 0.6 s long: at slow tempos a time that won't fit
+halves until it does. It behaves like tape:
+- Repeats get darker, thinner and grittier as they come round.
+- A change of tempo or time bends the repeats as the head glides.
+- Switching it off stops new sound reaching the tape, but the tail rings out.
+
+The echo setting and its feedback are saved with a patch. The mix is fixed at
+a level that sits behind the dry sound. The status line shows `E` and the
+time, green while the echo is on.
 
 ## The take (FN+`r`)
 
@@ -136,8 +152,8 @@ ratchet output, control sweeps and engine changes.
 
 ## Patches (FN+`2`…`8`)
 
-A patch saves the engine, surface, root, octave, tempo and the four controls,
-plus the take. It doesn't save the strip, tilt or volume.
+A patch saves the engine, surface, root, octave, tempo, the four controls and
+the echo, plus the take. It doesn't save the strip, tilt or volume.
 - Patches are plain `key=value` text in `/pocketdynamo/pN.txt` on the SD card,
   so you can edit them by hand. The take goes alongside as `pN.wav`.
 - Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, resampled to
@@ -177,7 +193,7 @@ PocketDynamo listens for MIDI two ways, both at once, on every channel:
 
 - **Top:** the engine, the surface, then root/octave, tempo and volume.
 - **Status line:** the strip, `SUS` and `TILT` (lit when on), the take (or REC
-  with a timer) and CPU load.
+  with a timer), the echo time and CPU load.
 - **Middle:** the four control bars. Green means tilt is driving that bar.
 - **Strip row:** the 12 strip keys, when a strip is on.
 - **Bottom line:** messages (MUTATE, SAVED 3, TAKE 1.2s 6 SLICES…), the looper's

@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "../dsp/pack12.h"
+
 namespace pd {
 
 class SampleStore {
@@ -71,20 +73,9 @@ class SampleStore {
   bool full() const { return length_ >= kCapacity; }
   uint32_t length() const { return length_; }
   // Sample i, as 16-bit (low 4 bits zero).
-  int16_t at(uint32_t i) const {
-    const uint8_t* p = packed_ + (i >> 1) * 3;
-    return (i & 1) ? (int16_t)((uint16_t)p[2] << 8 | (p[1] & 0xF0))
-                   : (int16_t)((uint16_t)(p[1] & 0x0F) << 12 | (uint16_t)p[0] << 4);
-  }
+  int16_t at(uint32_t i) const { return packed_.at(i); }
   // Store sample i from a 16-bit value, rounded to 12 bits (writer only).
-  void put(uint32_t i, int v) {
-    int r = (v + 8) >> 4;
-    r = r > 2047 ? 2047 : (r < -2048 ? -2048 : r);
-    const uint16_t u = (uint16_t)(r << 4);
-    uint8_t* p = packed_ + (i >> 1) * 3;
-    if (i & 1) { p[1] = (uint8_t)((p[1] & 0x0F) | (u & 0xF0)); p[2] = (uint8_t)(u >> 8); }
-    else       { p[0] = (uint8_t)(u >> 4); p[1] = (uint8_t)((p[1] & 0xF0) | (u >> 12)); }
-  }
+  void put(uint32_t i, int v) { packed_.put(i, v); }
   float gain() const { return gain_; }   // to apply on read: normalizes the take
   int slices() const { return slices_; }
   uint32_t sliceStart(int i) const { return slice_[i]; }
@@ -160,7 +151,7 @@ class SampleStore {
     return e / (float)n;
   }
 
-  uint8_t packed_[kCapacity / 2 * 3];
+  Pack12<kCapacity> packed_;
   uint32_t length_ = 0;
   float gain_ = 1.0f;
   float pending_ = 0.0f;
