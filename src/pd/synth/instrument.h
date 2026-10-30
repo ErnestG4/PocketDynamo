@@ -110,6 +110,8 @@ class Instrument {
   PD_HOT void render(float* out) {
     for (size_t i = 0; i < kBlock; ++i) out[i] = 0.0f;
     float main[kBlock], aux[kBlock];
+    int sounding = 0;
+    for (const auto& v : voices_) sounding += v.env.active();
     int active = 0;   // published once, at the end: the UI core reads it
     for (auto& v : voices_) {
       if (!v.env.active()) continue;
@@ -121,6 +123,7 @@ class Instrument {
       p.morph = params_[(int)Param::Morph];
       p.macro = params_[(int)Param::Macro];
       p.tempo = tempo_;
+      p.voices = (uint8_t)sounding;
       p.trigger = v.trigger ? kTriggerRising : 0;
       v.trigger = false;
       Engine& eng = v.engineFor();

@@ -32,7 +32,7 @@ class CloudEngine : public Engine {
     gaps_.Replay();
   }
 
-  void render(const EngineParams& p, float* out, float* aux, size_t n) override {
+  PD_HOT void render(const EngineParams& p, float* out, float* aux, size_t n) override {
     for (size_t i = 0; i < n; ++i) out[i] = aux[i] = 0.0f;
     const SampleStore& s = sampleStore();
     if (!s.ready()) { reset(); return; }
@@ -52,19 +52,29 @@ class CloudEngine : public Engine {
 
     if (p.trigger & kTriggerRising) { gaps_.Replay(); countdown_ = 0.0f; }
 
+    // Grain budget: the instrument's voices share kGrainBudget grains, so a
+    // dense cloud on many voices thins instead of overrunning the core (64
+    // full-size grains need ~115 % of it). Running grains finish; only new
+    // ones wait.
+    const int cap = clamp(kGrainBudget / std::max(1, (int)p.voices), 2, kGrains);
+    int live = 0;
+    for (const auto& g : grains_) live += g.on;
     for (size_t i = 0; i < n; ++i) {
       countdown_ -= 1.0f;
       if (countdown_ <= 0.0f) {
         countdown_ += gaps_.NextGap(zone, character, meanGap);
-        spawn(s, sizeOut, root, centre, melodic);
+        if (live < cap && spawn(s, sizeOut, root, centre, melodic)) ++live;
       }
     }
 
     // Normalize by the overlap — expected from density, or actual when the
     // statistics clump — so density doesn't swing the level.
+    // (Expected overlap can't exceed the budget's cap, or a capped cloud
+    // would also go quiet.)
     int active = 0;
     for (const auto& g : grains_) active += g.on;
-    const float overlap = std::max(1.0f, std::max(sizeOut / meanGap, (float)active));
+    const float expected = std::min(sizeOut / meanGap, (float)cap);
+    const float overlap = std::max(1.0f, std::max(expected, (float)active));
     const float target = 1.6f / std::sqrt(overlap);
     // Fall fast (a clump arriving), rise slowly (it thinning out).
     const float g0 = gain_, g1 = gain_ = gain_ + (target < gain_ ? 0.7f : 0.05f) * (target - gain_);
@@ -109,6 +119,7 @@ class CloudEngine : public Engine {
 
  private:
   static constexpr int kGrains = 8;
+  static constexpr int kGrainBudget = 36;   // across the instrument: ~1.7 % of the core each
   struct Grain {
     bool on = false;
     bool root = true;
@@ -117,16 +128,16 @@ class CloudEngine : public Engine {
     float phase = 0.0f, phaseInc = 0.0f;   // through the window, 0..1
   };
 
-  void spawn(const SampleStore& s, float sizeOut, float root, float centre, bool melodic) {
+  bool spawn(const SampleStore& s, float sizeOut, float root, float centre, bool melodic) {
     Grain* g = nullptr;
     for (auto& c : grains_) if (!c.on) { g = &c; break; }
-    if (!g) return;   // pool full: the cloud thins rather than steals
+    if (!g) return false;   // pool full: the cloud thins rather than steals
     static constexpr float kTone[4] = {0.0f, 7.0f, 12.0f, 19.0f};
     const int tone = melodic ? std::min(3, (int)(gaps_.last_voice_u() * 4.0f)) : 0;
     const float ratio = root * semitonesToRatio(kTone[tone]);
     const float srcLen = sizeOut * ratio;
     const float len = (float)s.length();
-    if (srcLen >= len - 4.0f * ratio - 8.0f) return;
+    if (srcLen >= len - 4.0f * ratio - 8.0f) return false;
     // A little positional scatter (+-10 ms) so a frozen cloud still breathes.
     rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
     const float jitter = ((float)(rng_ >> 8) * (1.0f / 16777216.0f) - 0.5f) * 0.02f * SampleStore::kRate;
@@ -140,6 +151,7 @@ class CloudEngine : public Engine {
     g->incF = (uint32_t)((ratio - (float)g->incI) * 4294967296.0f);
     g->phase = 0.0f;
     g->phaseInc = 1.0f / sizeOut;
+    return true;
   }
 
   Grain grains_[kGrains];

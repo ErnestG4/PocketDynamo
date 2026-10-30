@@ -37,7 +37,8 @@ const uint8_t kCodecInit[][2] = {
 RenderFn g_render = nullptr;
 
 volatile uint32_t g_blocks = 0, g_cyclesSum = 0, g_cyclesPeak = 0, g_windowBlocks = 0;
-volatile uint32_t g_late = 0, g_rxShort = 0;
+volatile uint32_t g_late = 0, g_rxShort = 0, g_underruns = 0;
+QueueHandle_t g_i2sEvents = nullptr;   // the driver's DMA events: underruns show up here
 volatile float g_slotSq[2] = {0.0f, 0.0f};
 volatile uint32_t g_slotN = 0;
 
@@ -79,6 +80,11 @@ void audioTask(void*) {
       ++g_late;
       i2s_write(kPort, (const uint8_t*)tx + put, sizeof(tx) - put, &put, portMAX_DELAY);
     }
+    // TX_Q_OVF: the DMA finished a buffer and found none newly written, so
+    // it replayed silence (tx_desc_auto_clear). That is what you hear.
+    i2s_event_t ev;
+    while (g_i2sEvents && xQueueReceive(g_i2sEvents, &ev, 0) == pdTRUE)
+      if (ev.type == I2S_EVENT_TX_Q_OVF) ++g_underruns;
   }
 }
 
@@ -100,7 +106,7 @@ bool begin(RenderFn fn) {
   cfg.dma_buf_len = kBlock;
   cfg.use_apll = false;
   cfg.tx_desc_auto_clear = true;
-  if (i2s_driver_install(kPort, &cfg, 0, nullptr) != ESP_OK) return false;
+  if (i2s_driver_install(kPort, &cfg, 16, &g_i2sEvents) != ESP_OK) return false;
   i2s_pin_config_t pins = {};
   pins.mck_io_num = I2S_PIN_NO_CHANGE;
   pins.bck_io_num = kPinBck;
@@ -124,6 +130,7 @@ Stats takeStats() {
   s.loadAvgPermil = (uint32_t)((uint64_t)g_cyclesSum * 1000 / ((uint64_t)n * kCyclesPerBlock));
   s.loadPeakPermil = (uint32_t)((uint64_t)g_cyclesPeak * 1000 / kCyclesPerBlock);
   s.lateWrites = g_late;
+  s.underruns = g_underruns;
   s.rxShort = g_rxShort;
   const uint32_t sn = g_slotN ? g_slotN : 1;
   s.slotRms[0] = sqrtf(g_slotSq[0] / sn); s.slotRms[1] = sqrtf(g_slotSq[1] / sn);

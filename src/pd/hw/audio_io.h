@@ -19,7 +19,8 @@ struct Stats {
   uint32_t blocks;         // rendered since boot
   uint32_t loadAvgPermil;  // render cycles / block period, last report window
   uint32_t loadPeakPermil;
-  uint32_t lateWrites;     // TX writes that had to wait on a full DMA (normal)
+  uint32_t lateWrites;     // TX writes that found the DMA full: a state, not a glitch count
+  uint32_t underruns;      // TX DMA buffers that ran out with nothing new: audible dropouts
   uint32_t rxShort;        // RX reads that came back short (should stay 0)
   float    slotRms[2];     // raw RMS of each I2S RX slot, for finding the mic
 };

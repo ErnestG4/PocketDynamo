@@ -47,6 +47,7 @@ struct EngineParams {
   float   macro     = 0.5f;   // plaits-lab's fourth control; 0.5 = neutral
   float   tempo     = 120.0f; // bpm, for engines that play on a grid
   uint8_t trigger   = 0;      // kTriggerRising on the block a note starts
+  uint8_t voices    = 1;      // voices sounding in the instrument, for engines that budget CPU
 };
 
 class Engine {
