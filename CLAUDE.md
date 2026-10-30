@@ -10,7 +10,9 @@ cardputer-synth. The original firmware is in `src/synth`; new work is in `src/pd
   - `audio_io`: ES8311 + I2S full duplex, render task on core 1.
   - `keys`: TCA8418 event FIFO.
   - `storage`: microSD on SPI2; the display owns SPI3.
-- `dsp/`: shared DSP (sine LUT, chords, ARS gap statistics, PRNG, Stern-Brocot).
+- `dsp/`: shared DSP (sine LUT, chords, ARS gap statistics, PRNG, Stern-Brocot),
+  and the master bus: `fx.h` (TONE / GRIT / SHAPE slots and the limiter) and
+  `echo.h` (the tape echo, whose SPACE turns it into a small room).
 - `engines/`: `pd::Engine` implementations (Plaits-shaped: note +
   harmonics/timbre/morph/macro + trigger, rendered in 32-sample blocks at
   48 kHz).
@@ -28,7 +30,13 @@ cardputer-synth. The original firmware is in `src/synth`; new work is in `src/pd
 - Float only in audio code: `double` is soft-float on the LX7. No heap, no libm
   per sample (per block is fine), uint32 phase accumulators.
 - Bench on the device with serial `B` (8 voices per engine, % of one core per
-  32-sample block). Keep every engine's peak well under 100%.
+  32-sample block). Keep every engine's peak well under 100%. With a take
+  loaded, or SAMPLE/CLOUD/BREAK bench silence. `xrun=` in the state line
+  counts real dropouts; `late` is only a DMA-phase state.
+- Hot per-sample loops go in IRAM with `PD_HOT` (both cores share a 16 KB
+  flash cache). It doesn't stick on class-template members: force-inline into
+  a non-template function, or mark it `noinline`. IRAM comes out of the heap
+  (about 26 KB free with USB + BLE), so keep it to the loops that need it.
 - Build/flash: `tools/flash.sh` (env `pd`), with the deps pinned in
   `platformio.ini` (unpinned espressif32 8.x + M5Unified 0.2.28 crash on boot).
   Env `pd` runs TinyUSB (serial CDC + USB MIDI), so a plain `pio upload` only
