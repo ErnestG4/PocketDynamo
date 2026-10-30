@@ -50,7 +50,19 @@ class CloudEngine : public Engine {
     const float root = semitonesToRatio(p.note - 60.0f) * ((float)SampleStore::kRate / kSampleRate);
     const float centre = clamp(p.harmonics, 0.0f, 1.0f);
 
-    if (p.trigger & kTriggerRising) { gaps_.Replay(); countdown_ = 0.0f; }
+    if (p.trigger & kTriggerRising) {
+      gaps_.Replay();
+      countdown_ = 0.0f;
+      // The last note's grains bow out within 3 ms instead of playing on
+      // under this one (an idle voice keeps its grains frozen, so they'd
+      // come back): a grain still rising jumps to the same level on the
+      // window's falling side, then the window runs out fast.
+      for (auto& g : grains_)
+        if (g.on) {
+          if (g.phase < 0.5f) g.phase = 1.0f - g.phase;
+          g.phaseInc = std::max(g.phaseInc, (1.0f - g.phase) * (1.0f / (0.003f * kSampleRate)));
+        }
+    }
 
     // Grain budget: the instrument's voices share kGrainBudget grains, so a
     // dense cloud on many voices thins instead of overrunning the core (64

@@ -51,17 +51,38 @@ int main() {
     check(c > 0.3f && off < 0.1f, "BP peaks at its centre");
     printf("LP 200/8k %.3f/%.3f  HP 60/8k %.3f/%.3f  BP c/off %.3f/%.3f\n", lo, hi, lo2, hi2, c, off);
   }
-  // CRUSH at full uses few levels; PWM is two-level.
+  // Once the amount has glided in: CRUSH at full uses few levels; PWM is
+  // three-level (+1, 0, -1), and on silence it is silent (no carrier tone).
   {
     MasterFx cr; cr.set(MasterFx::Grit, 0, 1.0f);
-    auto y = run(cr, sine(220, 0.9f, N));
-    std::set<float> levels(y.begin(), y.end());
+    auto y = run(cr, sine(220, 0.5f, N));   // under the limiter, so its levels are the crush's
+    std::set<float> levels(y.begin() + 4800, y.end());
     check(levels.size() <= 9, "CRUSH at full: a handful of levels");
     MasterFx pw; pw.set(MasterFx::Grit, 1, 1.0f);
-    auto z = run(pw, sine(220, 0.9f, N));
-    std::set<float> two(z.begin(), z.end());
-    check(two.size() == 2, "PWM at full: one bit");
-    printf("CRUSH levels %zu, PWM levels %zu\n", levels.size(), two.size());
+    auto z = run(pw, sine(220, 0.6f, N));
+    std::set<float> three(z.begin() + 4800, z.end());
+    check(three.size() <= 3, "PWM at full: pulses of +-1 or nothing");
+    MasterFx ps; ps.set(MasterFx::Grit, 1, 1.0f);
+    auto q = run(ps, std::vector<float>(N, 0.0f));
+    float qp = 0; for (float v : q) qp = std::max(qp, std::fabs(v));
+    check(qp == 0.0f, "PWM on silence is silent");
+    printf("CRUSH levels %zu, PWM levels %zu, PWM on silence %.3f\n", levels.size(), three.size(), qp);
+  }
+  // The filter on a hot square (a ZX voice) never pushes past full scale:
+  // the limiter turns the ringing edges down instead of the clip crushing
+  // them.
+  {
+    std::vector<float> sq(N);
+    for (size_t i = 0; i < N; ++i) sq[i] = ((i / 120) & 1) ? 0.95f : -0.95f;
+    float worst = 0;
+    for (int t = 0; t < 3; ++t)
+      for (float a : {0.2f, 0.5f, 0.8f}) {
+        MasterFx f; f.set(MasterFx::Tone, t, a);
+        auto y = run(f, sq);
+        for (size_t i = 2400; i < y.size(); ++i) worst = std::max(worst, std::fabs(y[i]));
+      }
+    check(worst <= 0.951f, "filtered squares stay under the limiter's 0.95");
+    printf("filtered square peak %.3f\n", worst);
   }
   // Everything at full on a hot, noisy bus stays finite and bounded.
   {

@@ -5,7 +5,11 @@
 //   GRIT   CRUSH (bits + rate) / PWM (1-bit pulse-width re-encode, the
 //          ZX beeper's way of playing samples) / DRIVE (saturation)
 //   TONE   LP / BP / HP (state-variable filter, Simper's TPT form)
-// The fourth FX bar, SPACE, lives in the echo (dsp/echo.h). No buffers: the
+// The fourth FX bar, SPACE, lives in the echo (dsp/echo.h). Amounts glide
+// (~4 ms) so key steps and tilt don't zipper. While any slot is engaged, a
+// peak limiter (instant attack, 80 ms release, transparent below 0.95)
+// ends the chain: a high-passed square spikes to twice its height, and
+// clipping those is what made the filter sound crushed. No buffers: the
 // whole thing is a few dozen floats. Pure — host-testable (fx_test.cpp).
 #pragma once
 #include <cmath>
@@ -30,23 +34,40 @@ class MasterFx {
 
   void set(int slot, int type, float amount) {
     if (slot < 0 || slot >= kSlots) return;
-    type_[slot] = (uint8_t)clamp(type, 0, kTypes - 1);
-    amount_[slot] = clamp(amount, 0.0f, 1.0f);
+    if (type_[slot] != (uint8_t)clamp(type, 0, kTypes - 1)) {   // a new effect starts clean
+      type_[slot] = (uint8_t)clamp(type, 0, kTypes - 1);
+      amount_[slot] = 0.0f;
+    }
+    target_[slot] = clamp(amount, 0.0f, 1.0f);
     dirty_ = true;
   }
   void setTempo(float bpm) { bpm_ = clamp(bpm, 20.0f, 400.0f); dirty_ = true; }
 
   PD_HOT __attribute__((noinline)) void process(float* io, size_t n) {
-    if (dirty_) prepare();
+    if (dirty_) glide();
+    const bool engaged = amount_[Shape] > 0.0f || amount_[Grit] > 0.0f || amount_[Tone] > 0.0f;
+    if (!engaged) { env_ = 0.0f; return; }   // all off: the dry bus, untouched
     if (amount_[Shape] > 0.0f) shape(io, n);
     if (amount_[Grit] > 0.0f) grit(io, n);
     if (amount_[Tone] > 0.0f) tone(io, n);
+    limit(io, n);
   }
 
  private:
-  // Per-change coefficients (libm here, never per sample).
+  // Amounts glide to their targets a block at a time (~4 ms), and the
+  // coefficients follow (libm per block while gliding, never per sample).
+  void glide() {
+    bool moving = false;
+    for (int s = 0; s < kSlots; ++s) {
+      const float d = target_[s] - amount_[s];
+      if (std::fabs(d) < 1e-4f) amount_[s] = target_[s];
+      else { amount_[s] += 0.15f * d; moving = true; }
+    }
+    prepare();
+    dirty_ = moving;
+  }
+
   void prepare() {
-    dirty_ = false;
     const float a = amount_[Tone];
     const int t = type_[Tone];
     // LP closes from 18 kHz down to 80 Hz, HP opens from 20 Hz up to 6 kHz,
@@ -55,7 +76,7 @@ class MasterFx {
     if (t == 0) fc = 18000.0f * std::pow(80.0f / 18000.0f, a);
     else if (t == 2) fc = 20.0f * std::pow(6000.0f / 20.0f, a);
     else fc = 100.0f * std::pow(80.0f, a);
-    const float q = t == 1 ? 2.5f : 0.7f + 1.3f * a;
+    const float q = t == 1 ? 1.5f : 0.707f + 0.5f * a;   // gentle: square edges ring
     svfG_ = std::tan(3.14159265f * clamp(fc, 10.0f, 0.45f * kSampleRate) / kSampleRate);
     svfK_ = 1.0f / q;
     svfA1_ = 1.0f / (1.0f + svfG_ * (svfG_ + svfK_));
@@ -113,12 +134,14 @@ class MasterFx {
           io[i] = std::round(held_ * crushQ_) / crushQ_;
         }
         break;
-      case 1: { // PWM: one bit, its duty cycle carrying the signal
-        const float level = 0.6f;
+      case 1: { // PWM: pulses whose width carries the level and whose sign
+        // carries the polarity (three levels, so silence stays silent and
+        // the carrier only sounds under the voice)
         for (size_t i = 0; i < n; ++i) {
           pwmPhase_ += pwmInc_;
-          const float duty = clamp(0.5f + 0.5f * io[i], 0.0f, 1.0f);
-          const float bit = (float)pwmPhase_ * (1.0f / 4294967296.0f) < duty ? level : -level;
+          const float x = clamp(io[i], -1.0f, 1.0f);
+          const bool high = (float)pwmPhase_ * (1.0f / 4294967296.0f) < std::fabs(x);
+          const float bit = high ? (x < 0.0f ? -1.0f : 1.0f) : 0.0f;
           io[i] = g >= 0.15f ? bit : io[i] + g * (1.0f / 0.15f) * (bit - io[i]);
         }
         break;
@@ -152,8 +175,24 @@ class MasterFx {
     ic2_ = std::fabs(ic2) < 1e-20f ? 0.0f : ic2;
   }
 
+  // Peak limiter: the envelope jumps to a new peak and falls over ~80 ms;
+  // gain only drops while it's above the threshold.
+  void limit(float* io, size_t n) {
+    float env = env_;
+    for (size_t i = 0; i < n; ++i) {
+      const float a = std::fabs(io[i]);
+      env = a > env ? a : env + kRelease * (a - env);
+      if (env > kThreshold) io[i] *= kThreshold / env;
+    }
+    env_ = env;
+  }
+  static constexpr float kThreshold = 0.95f;
+  static constexpr float kRelease = 1.0f / (0.08f * 48000.0f);
+
   uint8_t type_[kSlots] = {0, 0, 0};
-  float amount_[kSlots] = {0.0f, 0.0f, 0.0f};
+  float amount_[kSlots] = {0.0f, 0.0f, 0.0f};   // gliding
+  float target_[kSlots] = {0.0f, 0.0f, 0.0f};
+  float env_ = 0.0f;
   float bpm_ = 120.0f;
   bool dirty_ = true;
 
