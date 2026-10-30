@@ -80,13 +80,15 @@ void render(const float* in, float* out, size_t n) {
   // Strike budget: at most kStrikesPerBlock note-ons start per block; the
   // rest wait in the queue (in order) for the next block, 0.67 ms later. A
   // chord's setup cost (MODAL's strike state, FM's coefficients) then never
-  // lands on one block all at once.
+  // lands on one block all at once. A MODAL strike builds a resonator bank
+  // and counts double: four of them on top of eight ringing voices was the
+  // one dropout in a 20-minute soak.
   constexpr int kStrikesPerBlock = 4;
   int strikes = 0;
   pd::Event e;
   while (strikes < kStrikesPerBlock && g_events.pop(&e)) {
     g_synth.handle(e);
-    strikes += e.type == pd::EventType::NoteOn;
+    if (e.type == pd::EventType::NoteOn) strikes += g_synth.engine() == pd::EngineId::Modal ? 2 : 1;
   }
   g_synth.render(out);
 }
