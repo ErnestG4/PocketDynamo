@@ -26,13 +26,16 @@ inline const SineTable& sineTable() {
 
 // sin(2π · phase/2^32), linear interpolation on a 1024-point table
 // (worst-case error ~5e-6, well under 16-bit resolution).
-inline float sinePhase(uint32_t phase) {
-  const float* t = sineTable().v;
+// From a table pointer the caller hoisted out of its loop: sineTable() is a
+// function-local static, guard-checked on every call.
+inline float sineLut(const float* t, uint32_t phase) {
   const uint32_t i = phase >> (32 - kSineBits);
   const float frac = (float)(phase & ((1u << (32 - kSineBits)) - 1)) *
                      (1.0f / (float)(1u << (32 - kSineBits)));
   return t[i] + (t[i + 1] - t[i]) * frac;
 }
+
+inline float sinePhase(uint32_t phase) { return sineLut(sineTable().v, phase); }
 
 // Frequency in Hz -> uint32 phase increment at sample rate sr.
 inline uint32_t phaseIncrement(float hz, float sr) {

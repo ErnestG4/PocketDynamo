@@ -201,9 +201,10 @@ class BrocotFmEngine : public Engine {
     float dt = dt_;
     const float dt_step = (dt_end - dt_) * inv_n;
     uint32_t phase = carrier_phase_;
+    const float* sine = sineTable().v;
     for (size_t i = 0; i < size; ++i) {
       const float f = clamp(dt + dt * out[i], -0.45f, 0.45f);
-      out[i] = kLevel * sinePhase(phase);
+      out[i] = kLevel * sineLut(sine, phase);
       phase += (uint32_t)(int32_t)(f * 4294967296.0f);
       dt += dt_step;
     }
@@ -326,20 +327,27 @@ class BrocotFmEngine : public Engine {
   template <Mode kMode>
   static void renderOp(Op& o, int32_t inc_step, float a_step, float bus, const Shape& sh,
                        float* dev, float* aux, size_t size) {
+    // Everything the loop reads lives in locals: dev/aux are floats, so a
+    // store through them could alias the shape's floats, and the compiler
+    // would reload those every sample.
+    const float* t = sineTable().v;
+    const float fb_scale = sh.fb_scale, sine_gain = sh.sine_gain;
+    const float lut0 = sh.lut[0], lut1 = sh.lut[1], lut2 = sh.lut[2], lut3 = sh.lut[3];
     uint32_t ph = o.phase, inc = o.inc;
     float a = o.a, y1 = o.y1, y2 = o.y2, dc = o.dc, acc = o.dc_acc;
     int count = o.dc_count;
     for (size_t i = 0; i < size; ++i) {
       float raw;
       if constexpr (kMode == Mode::Feedback) {
-        raw = sinePhase(ph + (uint32_t)(int32_t)((y1 + y2) * sh.fb_scale));
+        raw = sineLut(t, ph + (uint32_t)(int32_t)((y1 + y2) * fb_scale));
         y2 = y1;
         y1 = raw;
       } else if constexpr (kMode == Mode::Pulse) {
-        raw = sh.lut[(ph < kDutyPhase ? 2 : 0) | (ph + 0x80000000u < kDutyPhase ? 1 : 0)];
-        if (sh.sine_gain > 0.0f) raw += sh.sine_gain * sinePhase(ph);
+        const bool hi = ph < kDutyPhase, lo = ph + 0x80000000u < kDutyPhase;
+        raw = hi ? (lo ? lut3 : lut2) : (lo ? lut1 : lut0);
+        if (sine_gain > 0.0f) raw += sine_gain * sineLut(t, ph);
       } else {
-        raw = sinePhase(ph);
+        raw = sineLut(t, ph);
       }
       const float x = raw - dc;
       dev[i] += a * x;
