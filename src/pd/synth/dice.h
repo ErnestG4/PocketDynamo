@@ -9,7 +9,7 @@
 namespace pd {
 namespace dice {
 
-// A fresh sound. HARMONICS leans low (few pins: the Follin sound), TIMBRE
+// A fresh sound. HARMONICS leans low (few pins: the classic beeper sound), TIMBRE
 // clusters round 0.6 and keeps clear of the sparse-click bottom, MORPH is
 // anything, MACRO clusters round neutral.
 inline void roll(float* params, uint32_t seed) {

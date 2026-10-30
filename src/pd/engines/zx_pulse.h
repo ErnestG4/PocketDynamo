@@ -1,7 +1,7 @@
 // Copyright 2026 Combust.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// ZxPulse — Tim Follin-style pulse-frequency-modulation click synthesis,
+// ZxPulse — ZX Spectrum beeper-style pulse-frequency-modulation click synthesis,
 // ported from the plaits-lab ZxPulse48k package. HARMONICS selects the chord,
 // MORPH builds the stack (low half) or runs the arp with continuous rate (high
 // half), TIMBRE is pin width (the level control), and macro is echo (CW) /
@@ -60,7 +60,7 @@ class ZxPulseEngine : public Engine {
         stack_count_ = clamp((int)raw, 1, kNumVoices);
     }
 
-    // macro: CW = Follin echo, delay 2..11 ticks (~40..220 ms). Noon =
+    // macro: CW = beeper echo, delay 2..11 ticks (~40..220 ms). Noon =
     // neutral (authentic pull stays on). CCW = exaggerated dying-speaker pull.
     const float macro = p.macro;
     const bool echo_on = macro > 0.55f;
@@ -83,7 +83,7 @@ class ZxPulseEngine : public Engine {
       dts[n] = f0 * ratios[arp_index_ & 3] * 2.0f; amps[n++] = kVoiceAmp;
     } else {
       int count = stack_count_;
-      if (echo_on && count == kNumVoices) --count;  // Follin: the last slot yields to the echo.
+      if (echo_on && count == kNumVoices) --count;  // the last slot yields to the echo.
       for (int v = 0; v < count; ++v) {
         dts[n] = v < 4 ? f0 * ratios[v] : f0 * ratios[0] * 2.0f;
         amps[n++] = kVoiceAmp;

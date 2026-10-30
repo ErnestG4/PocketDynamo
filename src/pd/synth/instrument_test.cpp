@@ -11,7 +11,7 @@ namespace {
 constexpr size_t kBlock = 32;
 using Synth = Instrument<6, kBlock>;
 
-// Peak |x| over a run of blocks. Peak, not RMS: a Follin pin train is a sparse
+// Peak |x| over a run of blocks. Peak, not RMS: a beeper pin train is a sparse
 // click train, mostly silent between pins by design.
 float runPeak(Synth& s, int blocks) {
   float out[kBlock], peak = 0.0f;

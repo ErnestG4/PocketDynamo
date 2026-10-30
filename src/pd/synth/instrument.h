@@ -68,7 +68,7 @@ class Instrument {
       v.env.setTimes(2.0f, releaseMs(EngineId::ZxPulse), kBlock);
     }
     for (int i = 0; i < (int)Param::Count; ++i) params_[i] = 0.5f;
-    params_[(int)Param::Harmonics] = 0.0f;   // single pin per key: Follin poly
+    params_[(int)Param::Harmonics] = 0.0f;   // single pin per key: beeper poly
     params_[(int)Param::Morph] = 0.0f;
     params_[(int)Param::Timbre] = 0.75f;     // ~15-sample pins: one key has body
   }

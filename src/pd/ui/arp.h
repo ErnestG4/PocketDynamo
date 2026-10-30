@@ -1,7 +1,7 @@
 // The ARP strip: which note of the held pool plays next. Slots 1..6 step on
 // the tempo grid (16ths), retriggering each note; slots 7..12 are the same
-// patterns as chip arps at a ZX frame rate (50 Hz, as Follin's drivers
-// stepped once per interrupt), one voice re-pitched legato.
+// patterns as chip arps at the ZX Spectrum's 50 Hz frame rate (its music
+// drivers stepped once per interrupt), one voice re-pitched legato.
 // MOTIF takes its timing and its note from Lenticular's three-distance gaps
 // (dsp/ars.h): each of the <= 3 gap lengths owns a note, so the rhythm is
 // the melody. Pure — host-testable.

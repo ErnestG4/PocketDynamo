@@ -40,7 +40,7 @@ These projects are by Combust. Code ported from them is AGPL-3.0:
 
 ## Techniques credited, no code copied
 
-- Tim Follin's pin-pulse beeper engines, and Shiru's Phaser1.
+- ZX Spectrum pin-pulse beeper engines, and Shiru's Phaser1.
 - Ian Fritz's double-pulse waveform (BROCOT FM's MORPH).
 - The Stern-Brocot tree (Stern 1858, Brocot 1861).
 - DX-style two-sample-averaged feedback.

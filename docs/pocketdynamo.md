@@ -53,7 +53,7 @@ become hold keys (their labels are on screen). Hold one, then play:
 - **ARP:** held and sustained notes arpeggiate one at a time.
   - Keys 1–6 (UP, DN, UD, ORD as played, RND, MTF) step in 16ths at the tempo.
   - Keys 7–12 are the same patterns as **chip arps**: one voice re-pitched at
-    50 Hz, the way Follin's drivers stepped once per frame.
+    50 Hz, the way ZX Spectrum music drivers stepped once per frame.
   - MOTIF takes both its rhythm and its notes from Lenticular's three-distance
     gap statistics.
 
@@ -103,7 +103,7 @@ Their bars turn green. Switching tilt off returns them to their set values.
 
 | Engine | HARMONICS | TIMBRE | MORPH | MACRO (CCW / CW) |
 |---|---|---|---|---|
-| **ZX PULSE**: Tim Follin-style pin trains | chord (Plaits' set) | pin width, which is also the level | builds the stack (lower half), then an arp whose rate rises (upper half) | exaggerated pitch pull / echo |
+| **ZX PULSE**: ZX Spectrum beeper pin trains | chord (Plaits' set) | pin width, which is also the level | builds the stack (lower half), then an arp whose rate rises (upper half) | exaggerated pitch pull / echo |
 | **ZX PHASE**: Phaser1-style 1-bit interference | mix method (XOR / OR / AND), with a 1-bit flanger inside each zone that steps up the harmonic series | PWM sweep on the second oscillator | unison beating → just ratios (4/3, 3/2, 2, 3, 4) → noise | kick-slide drum / ghost carrier |
 | **BROCOT FM**: parallel true FM on Stern-Brocot ratios | ratio family: harmonic → Avatar → Golden convergents (sweep it for the zipper) | FM index, tamed on high notes | DX feedback ← sine (middle) → Fritz double pulse | brass swell / bell strike |
 | **MODAL**: struck resonators | the object: string, stiff string, marimba, glockenspiel, kalimba / Rhodes tine, drum, bell, gong | the mallet, felt → metal (shapes the next strike) | decay, 50 ms → 20 s | metallic noise wash / Rhodes pickup bark |
