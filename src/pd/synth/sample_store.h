@@ -1,7 +1,8 @@
 // The one recorded sample every sampler engine reads: mono 12-bit at 24 kHz,
 // two samples packed in three bytes — SP-1200 territory (26 kHz/12-bit),
-// which buys 3.3 s in 120 KB and the period grit with it. (It was int16 in
-// 160 KB until BLE MIDI needed the 40 KB.) at()/put() see 16-bit values
+// which buys 2.5 s in 90 KB and the period grit with it. (It was 3.3 s of
+// int16 in 160 KB until BLE MIDI and the effects needed the room.)
+// at()/put() see 16-bit values
 // whose low 4 bits are zero; the take is normalized on read, so 12 bits
 // hold its full 72 dB.
 //
@@ -23,7 +24,7 @@ namespace pd {
 class SampleStore {
  public:
   static constexpr uint32_t kRate = 24000;
-  static constexpr uint32_t kCapacity = 80000;   // 3.33 s
+  static constexpr uint32_t kCapacity = 60000;   // 2.5 s
   static constexpr int kMaxSlices = 16;
   enum State : uint8_t { Empty, Recording, Analyzing, Ready };
 

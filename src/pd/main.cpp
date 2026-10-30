@@ -21,7 +21,7 @@
 // q/w root down/up a step, 9/0 tempo, ` / 1 octave, TAB previous surface,
 // \ previous engine,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
-// take, up to 3.3 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
+// take, up to 2.5 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
 // L looper record -> play <-> overdub (synth/looper.h), K stop / clear. Holding a param, volume, root or tempo combo repeats.
 // MIDI in over USB (hw/usb_midi, midi/midi.h): notes play as virtual keys,
 // so strips, sustain and the looper treat them like keys; CC 64 sustain,

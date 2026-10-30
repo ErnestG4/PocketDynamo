@@ -113,7 +113,7 @@ Their bars turn green. Switching tilt off returns them to their set values.
 
 ## The take (FN+`r`)
 
-Hold FN+`r` to record from the mic, for up to 3.3 s at 24 kHz and 12 bits (SP-1200
+Hold FN+`r` to record from the mic, for up to 2.5 s at 24 kHz and 12 bits (SP-1200
 territory). Sound stops while you record, so the speaker isn't recorded.
 - The take is trimmed, normalized and sliced at its onsets. The bottom line
   then shows its length and slice count.
