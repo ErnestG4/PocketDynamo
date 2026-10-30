@@ -1,6 +1,9 @@
-// The one recorded sample every sampler engine reads: mono int16 at 24 kHz —
-// half the output rate, SP-1200 territory (26 kHz/12-bit), which buys 3.3 s
-// in 160 KB and the period grit with it.
+// The one recorded sample every sampler engine reads: mono 12-bit at 24 kHz,
+// two samples packed in three bytes — SP-1200 territory (26 kHz/12-bit),
+// which buys 3.3 s in 120 KB and the period grit with it. (It was int16 in
+// 160 KB until BLE MIDI needed the 40 KB.) at()/put() see 16-bit values
+// whose low 4 bits are zero; the take is normalized on read, so 12 bits
+// hold its full 72 dB.
 //
 // Ownership moves with state, so no locks: Empty/Ready -> Recording (audio
 // core writes, engines go silent) -> Analyzing (control core trims,
@@ -44,10 +47,10 @@ class SampleStore {
   }
   void clear() { length_ = 0; slices_ = 0; state_.store(Empty, std::memory_order_release); }
 
-  // Load a take from elsewhere (SD): beginLoad() silences the readers and
-  // hands out the buffer (kCapacity samples at kRate); finishLoad(n) trims,
+  // Load a take from elsewhere (SD): beginLoad() silences the readers, the
+  // loader put()s up to kCapacity samples at kRate, and finishLoad(n) trims,
   // normalizes and slices it like a recording.
-  int16_t* beginLoad() { state_.store(Analyzing, std::memory_order_release); return data_; }
+  void beginLoad() { state_.store(Analyzing, std::memory_order_release); }
   bool finishLoad(uint32_t n) { length_ = std::min(n, kCapacity); return analyze(); }
 
   // --- audio side: append one block of the 48 kHz input, decimated 2:1 ---
@@ -57,7 +60,7 @@ class SampleStore {
       if (!half_) { pending_ = in[i]; half_ = true; continue; }
       half_ = false;
       const float v = 0.5f * (pending_ + in[i]) * 32767.0f;   // pair average: cheap anti-alias
-      data_[length_++] = (int16_t)(v > 32767.0f ? 32767.0f : (v < -32768.0f ? -32768.0f : v));
+      put(length_++, (int)(v > 32767.0f ? 32767.0f : (v < -32768.0f ? -32768.0f : v)));
     }
   }
 
@@ -66,7 +69,21 @@ class SampleStore {
   bool ready() const { return state() == Ready; }
   bool full() const { return length_ >= kCapacity; }
   uint32_t length() const { return length_; }
-  const int16_t* data() const { return data_; }
+  // Sample i, as 16-bit (low 4 bits zero).
+  int16_t at(uint32_t i) const {
+    const uint8_t* p = packed_ + (i >> 1) * 3;
+    return (i & 1) ? (int16_t)((uint16_t)p[2] << 8 | (p[1] & 0xF0))
+                   : (int16_t)((uint16_t)(p[1] & 0x0F) << 12 | (uint16_t)p[0] << 4);
+  }
+  // Store sample i from a 16-bit value, rounded to 12 bits (writer only).
+  void put(uint32_t i, int v) {
+    int r = (v + 8) >> 4;
+    r = r > 2047 ? 2047 : (r < -2048 ? -2048 : r);
+    const uint16_t u = (uint16_t)(r << 4);
+    uint8_t* p = packed_ + (i >> 1) * 3;
+    if (i & 1) { p[1] = (uint8_t)((p[1] & 0x0F) | (u & 0xF0)); p[2] = (uint8_t)(u >> 8); }
+    else       { p[0] = (uint8_t)(u >> 4); p[1] = (uint8_t)((p[1] & 0xF0) | (u >> 12)); }
+  }
   float gain() const { return gain_; }   // to apply on read: normalizes the take
   int slices() const { return slices_; }
   uint32_t sliceStart(int i) const { return slice_[i]; }
@@ -74,7 +91,8 @@ class SampleStore {
   // Interpolated read at a fractional position, normalized, 0 outside.
   float read(uint32_t i, float frac) const {
     if (i + 1 >= length_) return 0.0f;
-    return gain_ * (1.0f / 32768.0f) * ((float)data_[i] + frac * (float)(data_[i + 1] - data_[i]));
+    const float a = (float)at(i), b = (float)at(i + 1);
+    return gain_ * (1.0f / 32768.0f) * (a + frac * (b - a));
   }
 
   // Host tests fill the store directly.
@@ -82,7 +100,7 @@ class SampleStore {
     state_.store(Recording);
     length_ = 0; half_ = false;
     for (uint32_t i = 0; i < n && length_ < kCapacity; ++i)
-      data_[length_++] = (int16_t)std::lround(std::fmax(-1.0f, std::fmin(1.0f, x[i])) * 32767.0f);
+      put(length_++, (int)std::lround(std::fmax(-1.0f, std::fmin(1.0f, x[i])) * 32767.0f));
     stopRecording();
   }
 
@@ -91,22 +109,22 @@ class SampleStore {
   // 40 dB of the peak, end 20 ms after the last within 50 dB.
   void trim() {
     int peak = 1;
-    for (uint32_t i = 0; i < length_; ++i) peak = std::max(peak, std::abs((int)data_[i]));
+    for (uint32_t i = 0; i < length_; ++i) peak = std::max(peak, std::abs((int)at(i)));
     if (peak < 33) { length_ = 0; return; }   // nothing above -60 dBFS: no take
     const int on = peak / 100, off = peak / 316;
     uint32_t a = 0, b = length_;
-    while (a < length_ && std::abs((int)data_[a]) < on) ++a;
-    while (b > a && std::abs((int)data_[b - 1]) < off) --b;
+    while (a < length_ && std::abs((int)at(a)) < on) ++a;
+    while (b > a && std::abs((int)at(b - 1)) < off) --b;
     a = a > kRate / 200 ? a - kRate / 200 : 0;
     b = std::min(length_, b + kRate / 50);
     if (b <= a) { length_ = 0; return; }
-    memmove(data_, data_ + a, (b - a) * sizeof(int16_t));
+    for (uint32_t j = 0; j < b - a; ++j) put(j, at(j + a));   // forward: reads stay ahead of writes
     length_ = b - a;
   }
 
   void normalize() {
     int peak = 1;
-    for (uint32_t i = 0; i < length_; ++i) peak = std::max(peak, std::abs((int)data_[i]));
+    for (uint32_t i = 0; i < length_; ++i) peak = std::max(peak, std::abs((int)at(i)));
     gain_ = std::fmin(0.9f * 32768.0f / (float)peak, 64.0f);   // cap: don't blow up hiss
   }
 
@@ -128,20 +146,20 @@ class SampleStore {
       if (db > floorDb && db - recent > 6.0f && f - slice_[slices_ - 1] >= kMinGap) {
         // Back up to the zero crossing just before the frame.
         uint32_t s = f;
-        while (s > slice_[slices_ - 1] + 1 && (data_[s] >= 0) == (data_[s - 1] >= 0) && f - s < kFrame) --s;
+        while (s > slice_[slices_ - 1] + 1 && (at(s) >= 0) == (at(s - 1) >= 0) && f - s < kFrame) --s;
         slice_[slices_++] = s;
       }
       prevDb = db;
     }
   }
 
-  float frameEnergy(uint32_t at, uint32_t n) const {
+  float frameEnergy(uint32_t from, uint32_t n) const {
     float e = 0.0f;
-    for (uint32_t i = at; i < at + n; ++i) { const float v = (float)data_[i]; e += v * v; }
+    for (uint32_t i = from; i < from + n; ++i) { const float v = (float)at(i); e += v * v; }
     return e / (float)n;
   }
 
-  int16_t data_[kCapacity];
+  uint8_t packed_[kCapacity / 2 * 3];
   uint32_t length_ = 0;
   float gain_ = 1.0f;
   float pending_ = 0.0f;

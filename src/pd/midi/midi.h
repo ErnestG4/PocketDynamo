@@ -5,11 +5,15 @@
 //     bytes passed straight through and SysEx skipped.
 //   - fromUsbPacket: a USB-MIDI 4-byte event packet -> a message (the
 //     packet is already framed, so no parser state is needed).
+//   - BleDeframer: a BLE-MIDI packet -> bytes for a Parser, each message
+//     stamped from the packet's own millisecond timestamps.
 //   - MidiIn: a message -> calls on a handler (notes, sustain, the four
 //     controls, bend, program, clock tempo), so the device and the host
 //     tests share one mapping. Omni: every channel plays.
 // Pure — host-testable (midi_test.cpp).
 #pragma once
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 namespace pd {
@@ -65,6 +69,63 @@ inline bool fromUsbPacket(const uint8_t p[4], Msg* out) {
   if (cin == 0xF && p[1] >= 0xF8) { *out = Msg{p[1], 0, 0}; return true; }   // a lone realtime byte
   return false;
 }
+
+// BLE-MIDI (Apple's spec, adopted by the MMA): a header byte (bit 7 set,
+// low 6 bits the high bits of a 13-bit millisecond timestamp), then
+// messages, each led by a timestamp byte (bit 7 set, the low 7 bits) — so
+// a byte with bit 7 set right after a timestamp is a status, anywhere else
+// a timestamp. Running-status data may follow without one. Packets arrive
+// once per connection interval (7.5-15 ms), so arrival times would jitter
+// MIDI clock: each message is placed at the sender's timestamp instead,
+// mapped to local micros by the smallest offset seen (the fastest
+// delivery), which tracks drift by letting the minimum age out.
+class BleDeframer {
+ public:
+  template <typename F>   // f(byte, atUs)
+  void packet(const uint8_t* p, size_t n, uint32_t nowUs, F f) {
+    if (n < 2 || !(p[0] & 0x80)) return;
+    uint32_t high = p[0] & 0x3F;
+    uint32_t prevLow = 0;
+    bool afterTs = false;
+    uint32_t at = nowUs;
+    for (size_t i = 1; i < n; ++i) {
+      const uint8_t b = p[i];
+      if ((b & 0x80) && !afterTs) {
+        const uint32_t low = b & 0x7F;
+        if (low < prevLow) high = (high + 1) & 0x3F;   // the low byte wrapped inside the packet
+        prevLow = low;
+        at = place(high << 7 | low, nowUs);
+        afterTs = true;
+        continue;
+      }
+      afterTs = false;
+      f(b, at);
+    }
+  }
+
+ private:
+  // 13-bit ms timestamp -> local micros.
+  uint32_t place(uint32_t ts, uint32_t nowUs) {
+    if (!started_) { lastTs_ = ts; started_ = true; }
+    ms_ += (ts - lastTs_) & 0x1FFF;   // unwrap: timestamps only move forward
+    lastTs_ = ts;
+    const int32_t offset = (int32_t)(nowUs - ms_ * 1000u);   // latency + clock offset
+    if (!haveOffset_ || offset - offset_ < 0) {   // the fastest delivery yet
+      offset_ = offset;
+      offsetAt_ = nowUs;
+      haveOffset_ = true;
+    } else if (nowUs - offsetAt_ > 1000000u) {    // age it 1 ms a second, so drift can't strand it
+      offset_ += std::min<int32_t>(1000, offset - offset_);
+      offsetAt_ = nowUs;
+    }
+    const uint32_t at = ms_ * 1000u + (uint32_t)offset_;
+    return (int32_t)(at - nowUs) > 0 ? nowUs : at;   // never in the future
+  }
+
+  bool started_ = false, haveOffset_ = false;
+  uint32_t lastTs_ = 0, ms_ = 0, offsetAt_ = 0;
+  int32_t offset_ = 0;
+};
 
 // MIDI clock (24 per quarter) -> bpm, averaged over a beat's ticks. A gap
 // of over half a second (the clock stopped) starts the average again.

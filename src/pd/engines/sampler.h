@@ -64,16 +64,15 @@ class SamplerEngine : public Engine {
 
     // The loop runs on locals; the region guarantees idx + 1 < length, so
     // samples are read raw and the take's gain is applied once at the end.
-    const int16_t* d = s.data();
     const float scale = s.gain() * (1.0f / 32768.0f);
     const int64_t one = 1ll << 32;
     int64_t pos = pos_;
     int64_t step = dir_ > 0 ? inc : -inc;
     bool done = done_;
     float comp = comp_, last = last_;
-    auto sampleAt = [d](int64_t at) {
+    auto sampleAt = [&s](int64_t at) {
       const uint32_t idx = (uint32_t)(at >> 32);
-      const float a = (float)d[idx], b = (float)d[idx + 1];
+      const float a = (float)s.at(idx), b = (float)s.at(idx + 1);
       return a + (float)((uint32_t)at >> 8) * (1.0f / 16777216.0f) * (b - a);
     };
     for (size_t i = 0; i < n; ++i) {

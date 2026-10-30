@@ -50,6 +50,27 @@ Run render(Engine& e, EngineParams p, size_t samples) {
 int main() {
   SampleStore& s = sampleStore();
 
+  // 12-bit packing: neighbours sharing a byte stay independent, values round
+  // to within half a 12-bit step, the extremes clamp.
+  {
+    s.startRecording();
+    const int vals[] = {0, 1, -1, 7, 8, -8, -9, 1000, -1000, 32767, -32768, 12345, -23456, 15, -16, 300};
+    for (uint32_t pass = 0; pass < 2; ++pass)   // write in both orders: no clobbering either way
+      for (uint32_t k = 0; k < 16; ++k) {
+        const uint32_t i = pass ? 15 - k : k;
+        s.put(i, vals[i]);
+      }
+    for (uint32_t i = 0; i < 16; ++i) {
+      const int want = std::max(-32768, std::min(32752, vals[i]));
+      check(std::abs(s.at(i) - want) <= 8 && (s.at(i) & 0xF) == 0, "12-bit round trip");
+    }
+    s.put(4, 20000);
+    check(std::abs(s.at(4) - 20000) <= 8 && std::abs(s.at(5) - vals[5]) <= 8 && std::abs(s.at(3) - vals[3]) <= 8,
+          "rewriting one sample leaves its neighbours");
+    s.stopRecording();
+    s.clear();
+  }
+
   // Recording decimates 2:1 and stops at capacity.
   {
     s.startRecording();
@@ -57,7 +78,7 @@ int main() {
     for (size_t i = 0; i < kBlock; ++i) in[i] = (i & 1) ? 0.5f : 0.25f;
     s.record(in, kBlock);
     check(s.length() == kBlock / 2, "2:1 decimation");
-    check(std::abs(s.data()[0] - (int)(0.375f * 32767)) <= 1, "pairs are averaged");
+    check(std::abs(s.at(0) - (int)(0.375f * 32767)) <= 8, "pairs are averaged (to 12 bits)");
     for (int b = 0; b < 20000; ++b) s.record(in, kBlock);
     check(s.full() && s.length() == SampleStore::kCapacity, "stops at capacity");
     s.stopRecording();
@@ -93,8 +114,11 @@ int main() {
     const Run c4 = render(e, p, 2 * 48000);
     p.note = 72.0f;
     const Run c5 = render(e, p, 2 * 48000);
-    const float expect = 2.0f * s.length();   // output samples at C4
-    check(std::fabs(c4.lastSound - expect) < 0.02f * expect, "C4 plays the take at its own speed");
+    // Output samples at C4: the whole take, though its last 20 ms (the trim's
+    // pad below -50 dB) can round to silence at 12 bits.
+    const float expect = 2.0f * s.length(), padOut = 2.0f * SampleStore::kRate / 50;
+    check(c4.lastSound > 0.98f * (expect - padOut) && c4.lastSound < 1.02f * expect,
+          "C4 plays the take at its own speed");
     check(std::fabs(2.0f * c5.lastSound - c4.lastSound) < 0.02f * c4.lastSound, "an octave up is twice as fast");
     check(c4.peak > 0.3f && c4.peak < 0.7f, "level sits with the synth engines");
     p.note = 60.0f; p.morph = 0.3f; p.timbre = 0.6f;

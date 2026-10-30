@@ -60,9 +60,14 @@ bool save(int slot, const patch::Patch& p, const SampleStore& take) {
   uint8_t h[patch::kWavHeader];
   patch::wavHeader(h, SampleStore::kRate, take.length());
   bool wok = w.write(h, sizeof h) == sizeof h;
-  // The take is stored as recorded; its normalization is redone on load.
-  const size_t bytes = take.length() * sizeof(int16_t);
-  wok = wok && w.write((const uint8_t*)take.data(), bytes) == bytes;
+  // The take is stored as recorded (12-bit, written as plain 16-bit PCM);
+  // its normalization is redone on load.
+  int16_t chunk[256];
+  for (uint32_t i = 0; wok && i < take.length(); i += 256) {
+    const uint32_t n = std::min<uint32_t>(256, take.length() - i);
+    for (uint32_t j = 0; j < n; ++j) chunk[j] = take.at(i + j);
+    wok = w.write((const uint8_t*)chunk, n * 2) == n * 2;
+  }
   w.close();
   return wok;
 }
@@ -87,7 +92,7 @@ bool load(int slot, patch::Patch* p, SampleStore& take, bool* tookTake) {
   uint32_t rate = 0, offset = 0, samples = 0;
   if (!patch::wavParse(h, hn, &rate, &offset, &samples) || rate < 4000) { w.close(); return true; }
   w.seek(offset);
-  int16_t* dst = take.beginLoad();
+  take.beginLoad();
   delay(2);   // let the audio core finish a block that may still be reading
   // Resample to the store's rate on the fly (linear), in 512-sample chunks.
   const float step = (float)rate / (float)SampleStore::kRate;
@@ -107,7 +112,7 @@ bool load(int slot, patch::Patch* p, SampleStore& take, bool* tookTake) {
     if (i + 1 >= chunkStart + chunkLen) break;
     const float frac = pos - (float)i;
     const float a = chunk[i - chunkStart], b = chunk[i + 1 - chunkStart];
-    dst[out++] = (int16_t)(a + frac * (b - a));
+    take.put(out++, (int)(a + frac * (b - a)));
     pos += step;
   }
   w.close();

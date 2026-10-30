@@ -58,7 +58,6 @@ class BreakEngine : public Engine {
 
     if (p.trigger & kTriggerRising) { step_ = 0; stepPhase_ = 0.0f; startCell(s, stepSrc, stepOut, true); }
 
-    const int16_t* d = s.data();
     const float scale = s.gain() * (1.0f / 32768.0f) * kLevel;
     const int64_t maxPos = (int64_t)(len - 2) << 32;
     constexpr float kFadeRecip = 1.0f / (0.003f * kSampleRate);   // 3 ms
@@ -78,7 +77,7 @@ class BreakEngine : public Engine {
       float x = 0.0f;
       if (pos_ >= 0 && pos_ <= maxPos) {
         const uint32_t idx = (uint32_t)(pos_ >> 32);
-        const float a = (float)d[idx], b = (float)d[idx + 1];
+        const float a = (float)s.at(idx), b = (float)s.at(idx + 1);
         x = (a + (float)((uint32_t)pos_ >> 8) * (1.0f / 16777216.0f) * (b - a)) * scale;
       }
       x = clamp(x * level_ + comp_, -1.0f, 1.0f);

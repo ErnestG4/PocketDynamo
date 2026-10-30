@@ -68,6 +68,40 @@ int main() {
   for (int i = 0; i < 25; ++i, t += 25000) in.handle(Msg{0xF8, 0, 0}, t, log);
   check((log.got == std::vector<std::string>{"tempo 100"}), "clock restarts after a stop");
 
+  // BLE-MIDI: header, timestamped note-on, running-status note-on without a
+  // timestamp, a timestamped realtime byte, then a timestamped note-off.
+  {
+    BleDeframer ble; Parser p; In in; Log log; Msg m;
+    const uint8_t pkt[] = {0x80, 0x81, 0x90, 60, 100, 62, 90, 0x82, 0xF8, 0x83, 0x80, 60, 0};
+    ble.packet(pkt, sizeof pkt, 5000, [&](uint8_t b, uint32_t at) { if (p.feed(b, &m)) in.handle(m, at, log); });
+    check((log.got == std::vector<std::string>{"on 60 100", "on 62 90", "off 60"}), "ble deframe");
+    const uint8_t bad[] = {0x10, 0x81, 0x90, 1, 1};   // no header bit: not BLE-MIDI
+    log.got.clear();
+    ble.packet(bad, sizeof bad, 6000, [&](uint8_t b, uint32_t at) { if (p.feed(b, &m)) in.handle(m, at, log); });
+    check(log.got.empty(), "ble rejects a packet without a header");
+  }
+  // BLE clock: ticks 20 ms apart by the sender's timestamps, but delivered
+  // two to a packet every 40 ms with up to 9 ms of extra latency, and across
+  // the 13-bit wrap. Tempo comes out at 125 from the timestamps (arrival
+  // times alone would swing it by +-9 ms a beat, about +-2 bpm).
+  {
+    BleDeframer ble; Parser p; In in; Log log; Msg m;
+    uint32_t ts = 8000, now = 100000;
+    for (int k = 0; k < 600; ++k) {   // 48 s: six 8.192 s wraps
+      const uint32_t t1 = ts & 0x1FFF, t2 = (ts + 20) & 0x1FFF;
+      const uint8_t pkt[] = {(uint8_t)(0x80 | (t1 >> 7)), (uint8_t)(0x80 | (t1 & 0x7F)), 0xF8,
+                             (uint8_t)(0x80 | (t2 & 0x7F)), 0xF8};
+      const uint32_t late = (uint32_t)((k * 7919) % 9) * 1000;
+      ble.packet(pkt, sizeof pkt, now + 20000 + late, [&](uint8_t b, uint32_t at) { if (p.feed(b, &m)) in.handle(m, at, log); });
+      ts += 40; now += 40000;
+    }
+    // The first beat may read off while the latency minimum settles.
+    bool ok = log.got.size() >= 45;
+    for (size_t i = 1; i < log.got.size(); ++i) ok = ok && log.got[i] == "tempo 125";
+    check(ok, "ble clock tempo from timestamps, through jitter and the wrap");
+    if (!ok) for (auto& g : log.got) printf("  %s\n", g.c_str());
+  }
+
   printf(failures ? "midi_test: %d FAILED\n" : "midi_test: ok\n", failures);
   return failures != 0;
 }

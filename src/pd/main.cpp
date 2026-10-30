@@ -41,6 +41,7 @@
 #include "hw/audio_io.h"
 #include "hw/keys.h"
 #include "hw/storage.h"
+#include "hw/ble_midi.h"
 #include "hw/usb_midi.h"
 #include "midi/midi.h"
 #include "synth/dice.h"
@@ -504,6 +505,9 @@ struct MidiHandler {
 
 pd::midi::In g_midiIn;
 pd::midi::Parser g_serialMidi;   // serial 'M' injection, for scripted tests
+pd::midi::Parser g_bleMidi;
+pd::midi::BleDeframer g_bleDeframer;
+bool g_bleOk = false;
 
 void onMidi(const pd::midi::Msg& m, uint32_t atUs) {
   MidiHandler h;
@@ -518,6 +522,14 @@ void serviceMidi() {
   pd::midi::Msg m;
   uint32_t at;
   for (int i = 0; i < 32 && pd::usbmidi::poll(&m, &at); ++i) onMidi(m, at);
+  pd::blemidi::Packet pkt;
+  for (int i = 0; i < 8 && pd::blemidi::poll(&pkt); ++i)
+    g_bleDeframer.packet(pkt.data, pkt.len, pkt.at, [](uint8_t b, uint32_t t) {
+      pd::midi::Msg msg;
+      if (g_bleMidi.feed(b, &msg)) onMidi(msg, t);
+    });
+  static bool bleWas = false;
+  if (pd::blemidi::connected() != bleWas) { bleWas = !bleWas; g_ui.dirty = true; flash(bleWas ? "BLE MIDI CONNECTED" : "BLE MIDI DISCONNECTED"); }
   static bool lit = false;
   const bool on = millis() - g_ui.midiSeen < 250;
   if (on != lit) { lit = on; g_ui.dirty = true; }
@@ -793,10 +805,15 @@ void draw(const pd::audio::Stats& s) {
   d.setTextColor(g_ui.tilt ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
   d.setCursor(88, 24);
   d.print("TILT");
-  if (pd::usbmidi::available()) {
+  if (pd::usbmidi::available() || pd::blemidi::connected()) {
     d.setTextColor(millis() - g_ui.midiSeen < 250 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
     d.setCursor(170, 2);
     d.print("MIDI");
+  }
+  if (g_bleOk) {   // BT: dim while advertising, lit while a host is connected
+    d.setTextColor(pd::blemidi::connected() ? TFT_CYAN : TFT_DARKGREY, TFT_BLACK);
+    d.setCursor(200, 2);
+    d.print("BT");
   }
   d.setCursor(122, 24);
   const auto& take = pd::sampleStore();
@@ -984,10 +1001,11 @@ void setup() {
   const bool audioOk = pd::audio::begin(render);
   const bool sdOk = pd::storage::begin();
   pd::usbmidi::begin();
+  g_bleOk = pd::blemidi::begin();
   if (audioOk) setDac(kDacDefault);
-  Serial.printf("pd begin: audio=%s keys=%s imu=%s sd=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
+  Serial.printf("pd begin: audio=%s keys=%s imu=%s sd=%s ble=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
                 keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", sdOk ? "ok" : "none",
-                canvasOk ? "ok" : "FAIL", (unsigned long)ESP.getFreeHeap());
+                g_bleOk ? "ok" : "FAIL", canvasOk ? "ok" : "FAIL", (unsigned long)ESP.getFreeHeap());
   g_ui.seed = pd::rng::hash32(micros());
   g_ui.arpGaps.Init(g_ui.seed | 1u);
   pushParams();
