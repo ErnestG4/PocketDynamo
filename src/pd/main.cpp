@@ -33,6 +33,7 @@
 #include <Arduino.h>
 #include <M5Cardputer.h>
 #include <cstring>
+#include <new>
 
 #include "dsp/ars.h"
 #include "dsp/rng.h"
@@ -852,7 +853,11 @@ void draw(const pd::audio::Stats& s) {
 // --- serial ---
 
 void cpuBench() {
-  static Synth bench;   // static: a voice pool is too big for the task stack
+  // Borrowed from the heap for the bench only: a second voice pool held for
+  // good would cost 14.5 KB of RAM that BLE needs.
+  Synth* pool = new (std::nothrow) Synth;
+  if (!pool) { Serial.printf("bench: no room for a voice pool (largest block %lu)\n", (unsigned long)ESP.getMaxAllocHeap()); return; }
+  Synth& bench = *pool;
   constexpr int kBlocks = 1000;
   constexpr uint32_t kCyclesPerBlock = 240000000ULL * pd::audio::kBlock / pd::audio::kSampleRate;
   for (int eng = 0; eng < (int)pd::EngineId::Count; ++eng) {
@@ -881,13 +886,13 @@ void cpuBench() {
                   100.0f * sum / kBlocks / kCyclesPerBlock, 100.0f * peak / kCyclesPerBlock, peakAt,
                   100.0f * first / kCyclesPerBlock, (unsigned long)over, (unsigned long)(sum / kBlocks));
   }
-  bench.handle({pd::EventType::AllOff, 0, 0, 0.0f});
+  delete pool;
 }
 
 void printState(const pd::audio::Stats& s) {
   Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(t%.2f,m%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
-                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d\n",
+                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d heap=%lu/%lu\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
                 g_ui.sustain, g_ui.tilt, effective(1), effective(2), g_synth.activeVoices(),
                 (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10),
@@ -895,7 +900,7 @@ void printState(const pd::audio::Stats& s) {
                 (unsigned long)s.lateWrites, (g_ui.dacVol - 0xBF) * 0.5f, g_ui.octave, g_ui.root, g_ui.bpm,
                 effective(0), effective(1), effective(2), effective(3),
                 pd::sampleStore().ready() ? (float)pd::sampleStore().length() / pd::SampleStore::kRate : 0.0f,
-                pd::sampleStore().slices());
+                pd::sampleStore().slices(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
 }
 
 int hexDigit(int ch) {
@@ -972,7 +977,7 @@ void setup() {
   cfg.internal_mic = false;
   M5Cardputer.begin(cfg, false);   // our own TCA8418 driver, not M5's keyboard
   M5Cardputer.Display.fillScreen(TFT_BLACK);
-  g_canvas.setColorDepth(16);
+  g_canvas.setColorDepth(8);   // RGB332: half the RAM of 16-bit, plenty for flat colours and text
   const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
   const bool keysOk = pd::keys::begin();
   pd::sineTable();   // build the shared table now, not inside the first FM note's block
