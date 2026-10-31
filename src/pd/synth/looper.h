@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The looper records the event stream, not audio: every NoteOn/NoteOff,
 // re-strike, retune, control move and engine change sent to the synth while
 // it records is timestamped, then replayed every lap — so arps, ratchets,

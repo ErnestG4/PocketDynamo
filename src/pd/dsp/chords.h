@@ -12,6 +12,9 @@
 // or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS",
 // WITHOUT WARRANTY OF ANY KIND. See the LICENSE notice in Plaits for the full
 // text: http://creativecommons.org/licenses/MIT/
+//
+// This adaptation: Copyright 2026 Combust, AGPL-3.0-or-later (the table
+// and quantizer above keep their MIT notice).
 #pragma once
 #include "core.h"
 

@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // 12-bit sample storage, two samples in three bytes: the take and the echo's
 // tape. at()/put() speak 16-bit values whose low 4 bits are zero; put()
 // rounds to the nearest 12-bit step and clamps. Pure — host-testable.

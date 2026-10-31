@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Host test for dsp/echo.h: g++ -std=c++17 -O2 -I src/pd src/pd/dsp/echo_test.cpp
 #include "dsp/echo.h"
 

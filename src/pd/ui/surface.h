@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The playing surface: how the key grid becomes pitches. Columns 1..12 of all
 // four rows play; columns 0 and 13 are controls. Most surfaces are
 // isomorphic: one column right is colStep scale degrees, one row up is

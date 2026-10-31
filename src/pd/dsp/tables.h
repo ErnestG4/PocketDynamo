@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Shared lookup tables and fast math. Pure C++, no Arduino — host-buildable.
 // Phases are uint32 accumulators (one cycle = 2^32) throughout the framework:
 // exact, wrap for free, and index tables with a shift.

@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // BREAK: the take as a breakbeat, cut up live by Audiothurgist's Classic
 // chop grammar (synth/chop.h) on a 16th grid at the instrument's tempo.
 // After Audiothurgist's varispeed slice voice (Combust): the take is one bar, every step plays at

@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // BLE-MIDI peripheral transport (NimBLE): advertises as PocketDynamo with
 // the standard BLE-MIDI service and queues each packet the host writes,
 // stamped on arrival. midi::BleDeframer and everything after it are

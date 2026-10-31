@@ -1,3 +1,5 @@
+# Copyright 2026 Combust.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Render a plaits-lab package's scenarios with pd_render and compare them to
 the package's preview WAVs: RMS ratio, best-lag waveform correlation, and
 log-spectrum correlation, for main (L) and aux (R).

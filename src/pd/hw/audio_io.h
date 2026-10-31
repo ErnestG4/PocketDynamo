@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Full-duplex audio for the Cardputer ADV: ES8311 codec over I2C, I2S1 with
 // DAC out and mic in on one shared clock, and a render task pinned to core 1
 // at top priority. The task blocks on the RX DMA, so the codec clock paces

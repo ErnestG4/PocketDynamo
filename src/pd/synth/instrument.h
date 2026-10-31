@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The instrument: a voice pool, each voice an engine plus an envelope, all
 // sharing one set of controls. Pure C++ — the device render callback and the
 // host tests drive the same object.

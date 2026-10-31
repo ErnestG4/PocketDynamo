@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Host test: g++ -std=c++17 -O2 -Wall -I src/pd src/pd/engines/modal_test.cpp -o t && ./t [wav dir]
 // With a directory argument it also writes a few 3 s mono 16-bit WAVs there.
 #include "engines/modal.h"

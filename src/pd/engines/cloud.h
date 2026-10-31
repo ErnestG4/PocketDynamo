@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // CLOUD: the recorded take as a granular cloud. Clouds-style windowed grains
 // (the grain idea after Émilie Gillet's Clouds; this code is new) whose
 // onsets come from Lenticular's ARS gap statistics (dsp/ars.h, Combust): the same grain rate can be machine-even, even-but-alive, a

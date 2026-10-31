@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // What each key on the 4x14 grid does. Two tracker-style piano octaves:
 //   lower  z s x d c v g b h n j m , l . ; /     (C .. E, s d g h j l ; = sharps)
 //   upper  q 2 w 3 e r 5 t 6 y 7 u i 9 o 0 p [ = ]  (C .. G)

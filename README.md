@@ -45,10 +45,16 @@ Build and flash with [PlatformIO](https://platformio.org): `tools/flash.sh`.
 - Host tests sit next to the code as `*_test.cpp` and build with plain g++ (see `CLAUDE.md`).
 - Env `pd-jtag` is the same firmware without USB MIDI, for reading crash backtraces.
 
+## Licence
+
+PocketDynamo is free software under the **GNU Affero General Public License
+v3.0 or later** (see [LICENSE](LICENSE)). If you distribute it, or a modified
+version, you must offer its complete source under the same licence.
+
 ## Credits
 
-AGPL-3.0-or-later licensed. PocketDynamo is a fork of
+Copyright 2026 Combust. PocketDynamo carries code from Combust's own synth
+projects. It started as a fork of
 [cardputer-synth](https://github.com/chongjiazhen/cardputer-synth) by Chong Jia
-Zhen, whose original firmware is still in `src/synth`. It carries code from
-Combust's own synth projects, and from Mutable Instruments. See
-[NOTICE.md](NOTICE.md).
+Zhen; none of that code remains. Third-party code and its licences are listed
+in [NOTICE.md](NOTICE.md).

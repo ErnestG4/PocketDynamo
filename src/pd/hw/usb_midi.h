@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // USB-MIDI device transport: the thin wire layer. TinyUSB frames USB-MIDI
 // event packets; midi::fromUsbPacket and everything after it are shared
 // with the other transports (midi/midi.h). Built with ARDUINO_USB_MODE=0

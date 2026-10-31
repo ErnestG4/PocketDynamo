@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The sampler engines' MACRO colour: 0.5 clean; down to tape-dull (one-pole
 // lowpass, 12 kHz .. ~94 Hz); up to SP grit (sample-and-hold decimation,
 // 48 .. 6 kHz, with a bit crush, 16 .. 5 bits). set() once per block,

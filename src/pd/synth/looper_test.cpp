@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Host test: g++ -std=c++17 -O2 -I src/pd src/pd/synth/looper_test.cpp -o t && ./t
 #include "looper.h"
 #include "instrument.h"

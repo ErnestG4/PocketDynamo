@@ -1,8 +1,11 @@
 # CLAUDE.md — PocketDynamo
 
 Polyphonic old-school synth firmware for the M5Stack Cardputer ADV (ESP32-S3,
-8 MB flash, no PSRAM, single-precision FPU). PlatformIO. A fork of
-cardputer-synth. The original firmware is in `src/synth`; new work is in `src/pd`.
+8 MB flash, no PSRAM, single-precision FPU). PlatformIO, env `pd`; the code is
+in `src/pd`. Licence: AGPL-3.0-or-later. Every new file starts with
+`// Copyright 2026 Combust.` and `// SPDX-License-Identifier: AGPL-3.0-or-later`.
+Never add permissively licensed code without asking; third-party code keeps
+its own notice and goes in NOTICE.md.
 
 ## Layout (`src/pd`)
 

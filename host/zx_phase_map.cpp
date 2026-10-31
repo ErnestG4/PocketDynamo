@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Host map of ZX PHASE's HARMONICS x MORPH plane: renders each point fresh
 // (struck, controls held) and scores how pitched it is with YIN's cumulative
 // mean normalized difference (de Cheveigne & Kawahara 2002) or by spectral

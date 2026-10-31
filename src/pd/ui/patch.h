@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // A patch: the sound and playing setup, as a small text file a person can
 // read and edit on the SD card. Engines and surfaces are stored by name, so
 // reordering the tables never breaks a saved patch; unknown or missing keys

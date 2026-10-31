@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The microSD card: patches as text, takes as WAV, in /pocketdynamo/.
 // Slot n is pN.txt (+ pN.wav when the patch has a take). Call only from the
 // control task; SD access blocks for milliseconds (the audio core doesn't

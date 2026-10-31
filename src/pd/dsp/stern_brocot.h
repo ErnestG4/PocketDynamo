@@ -6,7 +6,8 @@
 // always in lowest terms; short paths are the simple, consonant ratios (R =
 // 2/1, RL = 3/2, RLL = 4/3), deeper ones finer and more inharmonic, and the
 // prefixes of one path are its successive mediants — continued-fraction
-// convergents of wherever the path is heading. Ported from Brocot (Combust); the string path became a
+// convergents of wherever the path is heading. Ported from Brocot (Combust);
+// the string path became a
 // bit word, so walk/prefix/parent are integer ops. Control rate only.
 #pragma once
 #include <cstdint>

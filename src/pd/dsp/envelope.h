@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Attack/release envelope evaluated once per block and ramped linearly across
 // it: one exp-style step per block instead of per sample. Attack is linear
 // (clickless onsets without softening transients), release is exponential so

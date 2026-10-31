@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Host renderer for PocketDynamo engines: plays a plaits-lab style scenario
 // (controls ramped linearly start->end, optional periodic trigger) and writes
 // a stereo 16-bit WAV, main on the left, aux on the right.

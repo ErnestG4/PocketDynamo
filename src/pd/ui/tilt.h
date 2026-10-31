@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Tilt -> controls, absolute: the device's attitude gives two readings,
 // side-to-side and front/back, which drive whichever controls they're
 // routed to (TIMBRE and MORPH unless rerouted). Accel axes as mounted on the Cardputer ADV (BMI270): flat on a

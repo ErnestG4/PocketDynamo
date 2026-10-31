@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Seeded PRNG with named streams, ported from the Model:Cycles generator core
 // (fw/core/prng.c, Combust). Every random decision is
 // a function of (seed, stream, sub), so adding draws to one feature never

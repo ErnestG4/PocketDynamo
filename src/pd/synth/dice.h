@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The dice key: roll a new set of the four controls, or mutate the current
 // one. The design follows the Model:Cycles randomizer — per-parameter ranges
 // and bias, one stream per parameter so a roll is reproducible from its seed.

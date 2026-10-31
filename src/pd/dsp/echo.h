@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Tape echo on the master bus. One mono loop of "tape": 0.6 s at 24 kHz and
 // 12 bits (dsp/pack12.h, 21.6 KB). The whole echo runs at that rate, one
 // step per output pair (pair-averaged in, interpolated out), which halves

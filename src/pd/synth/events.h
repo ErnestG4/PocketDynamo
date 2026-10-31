@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Control -> audio events and the lock-free single-producer/single-consumer
 // ring that carries them from core 0 to core 1. The audio side drains the
 // ring at the top of every block; at 32-frame blocks that is 0.67 ms of

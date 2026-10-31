@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // SAMPLE: the recorded take played as a record — pitch is speed, no
 // time-stretch, C4 plays it as recorded. After Audiothurgist's slice voice
 // (Combust): varispeed

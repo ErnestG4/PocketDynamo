@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Master-bus effects: three slots, each holding one effect from its own
 // short menu, with one amount. Amount 0 bypasses a slot exactly. They run
 // once on the summed bus (not per voice), in a fixed order:

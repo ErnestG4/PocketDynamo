@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // MIDI in, shared by every transport. A transport only gets bytes or
 // packets off its wire; everything after that is here, once:
 //   - MidiParser: a byte stream (BLE-MIDI after its header and timestamps

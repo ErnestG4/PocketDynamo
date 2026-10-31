@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Framework-wide DSP basics: sample rate, pitch math, the engine interface.
 // Pure C++, no Arduino — host-buildable. Engines are Plaits-shaped: four
 // normalized controls plus pitch and a trigger, rendered a block at a time.

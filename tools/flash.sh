@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Combust.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Build and flash env pd in one go. The running firmware's USB is TinyUSB
 # (serial + MIDI), so first ask it over serial ('U') to reboot into ROM
 # download mode, wait for the bootloader's USB-Serial/JTAG port, then upload.

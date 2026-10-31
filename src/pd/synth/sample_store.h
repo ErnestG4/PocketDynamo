@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The one recorded sample every sampler engine reads: mono 12-bit at 24 kHz,
 // two samples packed in three bytes — SP-1200 territory (26 kHz/12-bit),
 // which buys 2.5 s in 90 KB and the period grit with it. (It was 3.3 s of

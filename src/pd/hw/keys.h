@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Cardputer ADV keyboard: the TCA8418 keypad scanner on the internal I2C bus.
 // It queues hardware press/release events in a 10-deep FIFO and pulls INT
 // (GPIO11) low while any are pending, so we get true note-on/note-off edges

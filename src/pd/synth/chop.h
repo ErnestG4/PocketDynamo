@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Audiothurgist's Classic chop grammar (the BreakFix generator), ported from
 // core/bb_pattern.h (Combust). Same RNG, same draws, same constants — a seed gives the
 // same chops as on the module. Only Classic is here, with no drum-class or

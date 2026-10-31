@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // The ARP strip: which note of the held pool plays next. Slots 1..6 step on
 // the tempo grid (16ths), retriggering each note; slots 7..12 are the same
 // patterns as chip arps at the ZX Spectrum's 50 Hz frame rate (its music

@@ -1,3 +1,6 @@
+// Copyright 2026 Combust.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // PocketDynamo — playable: keyboard -> event queue -> instrument -> codec.
 // Core 1: pd_audio render task (hw/audio_io), drains the event queue each
 // block. Core 0: control task — keyboard, tilt, display, serial. The Arduino
