@@ -137,6 +137,10 @@ inline bool wavParse(const uint8_t* h, size_t n, uint32_t* rate, uint32_t* dataO
       *samples = size / 2;
       return true;
     }
+    // The size comes from the file: one past the header we hold (or a
+    // corrupt one near 4 GB, which would wrap `at` and spin forever) means
+    // there's no data chunk to find here.
+    if (size > n - at - 8) return false;
     at += 8 + size + (size & 1);
   }
   return false;

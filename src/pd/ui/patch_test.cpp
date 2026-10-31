@@ -56,6 +56,16 @@ int main() {
   check(wavParse(h, sizeof h, &rate, &off, &n) && rate == 24000 && off == 44 && n == 1000, "WAV header round-trips");
   h[22] = 2;   // stereo
   check(!wavParse(h, sizeof h, &rate, &off, &n), "stereo refused");
+  {
+    // A chunk claiming ~4 GB (it would wrap the offset and loop forever) and
+    // one running past the header: both refused, neither hangs.
+    uint8_t bad[64] = {};
+    memcpy(bad, "RIFF", 4); memcpy(bad + 8, "WAVE", 4);
+    memcpy(bad + 12, "JUNK", 4); bad[16] = 0xF8; bad[17] = 0xFF; bad[18] = 0xFF; bad[19] = 0xFF;
+    check(!wavParse(bad, sizeof bad, &rate, &off, &n), "a 4 GB chunk size is refused");
+    bad[16] = 200; bad[17] = bad[18] = bad[19] = 0;
+    check(!wavParse(bad, sizeof bad, &rate, &off, &n), "a chunk past the header is refused");
+  }
   printf("patch ok\n");
   return 0;
 }
