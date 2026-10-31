@@ -377,6 +377,8 @@ void serviceTilt() {
   if (!g_ui.tilt) return;
   float a[3];
   readAccel(a);
+  // A bad read must not reach the smoothing: a NaN there would stay forever.
+  if (!pd::isFinite(a[0]) || !pd::isFinite(a[1]) || !pd::isFinite(a[2])) return;
   float& s = g_ui.tiltAxis[0];
   float& f = g_ui.tiltAxis[1];
   s += 0.3f * (pd::tilt::side(a[0], a[1], a[2]) - s);    // ~30 ms smoothing at 100 Hz
