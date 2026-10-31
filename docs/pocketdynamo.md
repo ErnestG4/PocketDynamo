@@ -297,3 +297,4 @@ Holding a key that adjusts something repeats it.
 | `K<row><col-hex><+/->` | press or release a key (row 0–3 from the top, column 0–d from the left) |
 | `M<hex bytes>.` | raw MIDI bytes, handled as if they came in over USB (`M90 3C 64.`) |
 | `U` | reboot into the bootloader, ready to flash |
+| `L` | the licence notice, the version and commit it was built from, and the full licence text |

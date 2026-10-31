@@ -38,7 +38,8 @@
 // change picks the engine, MIDI clock sets the tempo.
 // Serial: [ / ] volume, i = print state, B = silent CPU bench, S = SD status, K<row><col
 // hex><+|-> = press/release a key, M<hex>. = raw MIDI bytes (for scripted
-// tests), U = reboot into the bootloader (USB-MIDI builds, to flash).
+// tests), U = reboot into the bootloader (USB-MIDI builds, to flash),
+// L = the licence notice and the full licence text.
 #include <Arduino.h>
 #include <M5Cardputer.h>
 #include <cstring>
@@ -65,6 +66,14 @@
 #ifndef PD_VERSION
 #define PD_VERSION "dev"
 #endif
+#ifndef PD_GIT
+#define PD_GIT "unknown"
+#endif
+
+// The AGPL's "Appropriate Legal Notices" (section 5(d)): shown on the boot
+// screen and over serial, with the licence text itself in the binary.
+#define PD_SOURCE_URL "github.com/ErnestG4/PocketDynamo"
+extern const char kLicenseText[] asm("_binary_LICENSE_start");
 
 // Explicit, so GCC honours render()'s PD_HOT (IRAM) section: it drops the
 // attribute on an implicit instantiation of a class-template member.
@@ -1041,6 +1050,38 @@ void rootLabel(char* buf, size_t n) {
   else snprintf(buf, n, "%s%d", name, g_ui.octave);
 }
 
+// The boot screen: version, commit and the licence notice, held for
+// kNoticeMs (the instrument already plays underneath).
+constexpr uint32_t kNoticeMs = 2500;
+void drawNotice() {
+  auto& d = M5Cardputer.Display;
+  d.fillScreen(TFT_BLACK);
+  d.setTextSize(2);
+  d.setTextColor(TFT_ORANGE, TFT_BLACK);
+  d.setCursor(4, 6);
+  d.print("PocketDynamo");
+  d.setTextSize(1);
+  d.setTextColor(TFT_WHITE, TFT_BLACK);
+  d.setCursor(4, 30);
+  d.print("v" PD_VERSION "  " PD_GIT);
+  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  static const char* const kLines[] = {
+      "Copyright 2026 Combust",
+      "Free software: GNU AGPL v3 or later.",
+      "There is NO WARRANTY.",
+      "Source code and licence:",
+      PD_SOURCE_URL,
+  };
+  for (int i = 0; i < 5; ++i) { d.setCursor(4, 50 + 14 * i); d.print(kLines[i]); }
+}
+
+void printNotice(bool full) {
+  Serial.printf("PocketDynamo " PD_VERSION " (" PD_GIT ")\n"
+                "Copyright 2026 Combust. Free software under the GNU Affero General Public\n"
+                "License v3.0 or later, with NO WARRANTY. Source: https://" PD_SOURCE_URL "\n");
+  if (full) Serial.print(kLicenseText);
+}
+
 void draw(const pd::audio::Stats& s) {
   auto& d = g_canvas;
   d.fillScreen(TFT_BLACK);
@@ -1228,6 +1269,7 @@ void controlTask(void*) {
       else if (c == 'B') cpuBench();
       else if (c == 'S') { if (!pd::storage::mounted()) pd::storage::begin(); pd::storage::report(); }
       else if (c == 'U') pd::usbmidi::rebootToBootloader();
+      else if (c == 'L') printNotice(true);
       else if (c == 'M') {   // M<hex bytes>. : raw MIDI, as if it came in over USB
         int hi = -1;
         for (uint32_t t0 = millis(); millis() - t0 < 200;) {
@@ -1255,7 +1297,7 @@ void controlTask(void*) {
       g_ui.dirty = true;
     }
     if (g_ui.msg && (int32_t)(now - g_ui.msgUntil) >= 0) { g_ui.msg = nullptr; g_ui.dirty = true; }
-    if (g_ui.dirty && now - lastDraw >= kDrawMs) { lastDraw = now; draw(stats); g_ui.dirty = false; }
+    if (g_ui.dirty && now - lastDraw >= kDrawMs && now >= kNoticeMs) { lastDraw = now; draw(stats); g_ui.dirty = false; }
     vTaskDelay(1);
   }
 }
@@ -1268,7 +1310,7 @@ void setup() {
   cfg.internal_spk = false;   // we own the codec and I2S
   cfg.internal_mic = false;
   M5Cardputer.begin(cfg, false);   // our own TCA8418 driver, not M5's keyboard
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  drawNotice();
   g_canvas.setColorDepth(8);   // RGB332: half the RAM of 16-bit, plenty for flat colours and text
   const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
   const bool keysOk = pd::keys::begin();
@@ -1280,6 +1322,7 @@ void setup() {
   pd::usbmidi::begin();
   g_bleOk = pd::blemidi::begin();
   if (audioOk) setDac(kDacDefault);
+  printNotice(false);
   Serial.printf("pd " PD_VERSION " begin: audio=%s keys=%s imu=%s sd=%s ble=%s canvas=%s free_heap=%lu\n", audioOk ? "ok" : "FAIL",
                 keysOk ? "ok" : "FAIL", M5.Imu.isEnabled() ? "ok" : "none", sdOk ? "ok" : "none",
                 g_bleOk ? "ok" : "FAIL", canvasOk ? "ok" : "FAIL", (unsigned long)ESP.getFreeHeap());
