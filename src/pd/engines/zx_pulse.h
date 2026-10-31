@@ -43,7 +43,11 @@ class ZxPulseEngine : public Engine {
 
     // Pin width in samples, exponential: 0.5 (whisper clicks) to ~48 (full
     // body). Width is the level control, as on the hardware that inspired it.
-    const float width = 0.5f * semitonesToRatio(79.2f * p.timbre);
+    // libm only when its input moves (it's hundreds of cycles a call on this
+    // core, and eight voices call each every block): keyed on the exact
+    // float, so the values are the same as computing them every time.
+    if (p.timbre != width_key_) { width_key_ = p.timbre; width_ = 0.5f * semitonesToRatio(79.2f * p.timbre); }
+    const float width = width_;
 
     // MORPH low half builds the stack; high half is the arp, its rate rising
     // continuously across the span (tick/6 .. tick/1 at 50 Hz).
@@ -73,7 +77,8 @@ class ZxPulseEngine : public Engine {
 
     // Assemble voices from the chord. Stack mode: root, chord tones, root
     // octave on top. Arp mode: root + fifth drone under the arp voice.
-    const float f0 = noteToDt(p.note + kTwoOctavesDown);
+    if (p.note != f0_key_) { f0_key_ = p.note; f0_ = noteToDt(p.note + kTwoOctavesDown); }
+    const float f0 = f0_;
     float dts[kNumVoices], duties[kNumVoices], amps[kNumVoices];
     int n = 0, arp_slot = -1;
     if (arp_mode_) {
@@ -105,9 +110,10 @@ class ZxPulseEngine : public Engine {
     }
     const float load = clamp(traffic * (1.0f / 0.15f), 0.0f, 1.5f);
     // 0.02 per Plaits block of 12 samples, scaled to this block size.
-    const float pull_coef = 1.0f - std::pow(0.98f, (float)size * (1.0f / 12.0f));
-    pull_ += pull_coef * (pull_depth * load - pull_);
-    const float pull_ratio = semitonesToRatio(-pull_);
+    if (size != pull_size_) { pull_size_ = size; pull_coef_ = 1.0f - std::pow(0.98f, (float)size * (1.0f / 12.0f)); }
+    pull_ += pull_coef_ * (pull_depth * load - pull_);
+    if (pull_ != pull_key_) { pull_key_ = pull_; pull_ratio_ = semitonesToRatio(-pull_); }
+    const float pull_ratio = pull_ratio_;
     for (int v = 0; v < n; ++v)
       if (v != echo_slot) dts[v] *= pull_ratio;
 
@@ -169,6 +175,10 @@ class ZxPulseEngine : public Engine {
   int history_pos_ = 0;
 
   float pull_ = 0.0f;       // smoothed pitch-pull amount, semitones
+  // Cached libm results and the exact inputs they came from.
+  float width_key_ = -1.0f, width_ = 0.0f, f0_key_ = -1000.0f, f0_ = 0.0f;
+  size_t pull_size_ = 0;
+  float pull_coef_ = 0.0f, pull_key_ = -1000.0f, pull_ratio_ = 1.0f;
 };
 
 }  // namespace pd

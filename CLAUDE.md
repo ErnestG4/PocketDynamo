@@ -29,9 +29,13 @@ cardputer-synth. The original firmware is in `src/synth`; new work is in `src/pd
   host-tests with g++.
 - Float only in audio code: `double` is soft-float on the LX7. No heap, no libm
   per sample (per block is fine), uint32 phase accumulators.
-- Bench on the device with serial `B` (8 voices per engine, % of one core per
-  32-sample block). Keep every engine's peak well under 100%. With a take
-  loaded, or SAMPLE/CLOUD/BREAK bench silence. `xrun=` in the state line
+- Bench on the device with serial `B`: 8 held notes per engine on the live
+  instrument (muted, effects off), % of one core per 32-sample block, peak
+  including the strikes. Keep every engine's peak under 100%. Load a take
+  first, or SAMPLE/CLOUD/BREAK bench silence.
+- libm (`pow`, `exp2`, `tan`…), double maths and 64-bit division are hundreds
+  of cycles each on this core: cache them on their exact inputs (bit-exact)
+  rather than computing them every block. `xrun=` in the state line
   counts real dropouts; `late` is only a DMA-phase state.
 - Hot per-sample loops go in IRAM with `PD_HOT` (both cores share a 16 KB
   flash cache). It doesn't stick on class-template members: force-inline into

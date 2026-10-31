@@ -291,7 +291,7 @@ Holding a key that adjusts something repeats it.
 | Command | |
 |---|---|
 | `i` | print the state line (engine, voices, CPU load and peak, dropouts as `xrun`, heap, uptime…) |
-| `B` | a silent CPU bench of every engine with 8 voices |
+| `B` | a silent CPU bench: each engine plays 8 held notes on the live instrument for a second, with the effects off, and reports its load, its peak (including the strikes) and any dropouts |
 | `S` | SD card status |
 | `[` / `]` | volume |
 | `K<row><col-hex><+/->` | press or release a key (row 0–3 from the top, column 0–d from the left) |

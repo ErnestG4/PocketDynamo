@@ -15,6 +15,8 @@ class Lofi {
   void reset() { lp_ = 0.0f; held_ = 0.0f; count_ = 0; }
 
   void set(float macro) {
+    if (macro == key_) return;   // libm only when MACRO moves
+    key_ = macro;
     lpCoef_ = 1.0f; hold_ = 1; crushQ_ = 32768.0f;
     if (macro < 0.49f) {
       const float fc = 12000.0f * std::exp2(-(0.5f - macro) * 14.0f);
@@ -42,6 +44,7 @@ class Lofi {
   }
 
  private:
+  float key_ = -1.0f;   // the macro the settings below came from
   float lpCoef_ = 1.0f, crushQ_ = 32768.0f;
   int hold_ = 1, count_ = 0;
   float lp_ = 0.0f, held_ = 0.0f;

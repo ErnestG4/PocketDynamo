@@ -41,7 +41,11 @@ class MasterFx {
     target_[slot] = clamp(amount, 0.0f, 1.0f);
     dirty_ = true;
   }
-  void setTempo(float bpm) { bpm_ = clamp(bpm, 20.0f, 400.0f); dirty_ = true; }
+  void setTempo(float bpm) {
+    bpm_ = clamp(bpm, 20.0f, 400.0f);
+    preparedAmount_[Shape] = -1.0f;   // TREM's rate follows the tempo
+    dirty_ = true;
+  }
 
   PD_HOT __attribute__((noinline)) void process(float* io, size_t n) {
     if (dirty_) glide();
@@ -67,7 +71,20 @@ class MasterFx {
     dirty_ = moving;
   }
 
+  // Each slot's coefficients are recomputed only when its amount or type
+  // has moved since they were last made (a tilt sweep moves one slot).
   void prepare() {
+    for (int s = 0; s < kSlots; ++s) {
+      if (amount_[s] == preparedAmount_[s] && type_[s] == preparedType_[s]) continue;
+      preparedAmount_[s] = amount_[s];
+      preparedType_[s] = type_[s];
+      if (s == Tone) prepareTone();
+      else if (s == Grit) prepareGrit();
+      else prepareShape();
+    }
+  }
+
+  void prepareTone() {
     const float a = amount_[Tone];
     const int t = type_[Tone];
     // LP closes from 18 kHz down to 80 Hz, HP opens from 20 Hz up to 6 kHz,
@@ -82,7 +99,9 @@ class MasterFx {
     svfA1_ = 1.0f / (1.0f + svfG_ * (svfG_ + svfK_));
     svfA2_ = svfG_ * svfA1_;
     svfA3_ = svfG_ * svfA2_;
+  }
 
+  void prepareGrit() {
     const float g = amount_[Grit];
     // CRUSH: 12 bits -> 3, and a hold of 1 -> 24 samples (48 kHz -> 2 kHz).
     crushQ_ = std::exp2(11.0f - 9.0f * g);
@@ -91,7 +110,9 @@ class MasterFx {
     pwmInc_ = (uint32_t)(16000.0f * std::pow(1200.0f / 16000.0f, g) / kSampleRate * 4294967296.0f);
     // DRIVE: up to 30 dB into the curve.
     driveGain_ = std::exp2(5.0f * g);
+  }
 
+  void prepareShape() {
     const float s = amount_[Shape];
     foldGain_ = 1.0f + 7.0f * s;                     // 1 .. 8 folds
     ringInc_ = (uint32_t)(30.0f * std::pow(2000.0f / 30.0f, s) / kSampleRate * 4294967296.0f);
@@ -193,6 +214,8 @@ class MasterFx {
   float amount_[kSlots] = {0.0f, 0.0f, 0.0f};   // gliding
   float target_[kSlots] = {0.0f, 0.0f, 0.0f};
   float env_ = 0.0f;
+  float preparedAmount_[kSlots] = {-1.0f, -1.0f, -1.0f};
+  uint8_t preparedType_[kSlots] = {255, 255, 255};
   float bpm_ = 120.0f;
   bool dirty_ = true;
 

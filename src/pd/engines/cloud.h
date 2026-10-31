@@ -38,8 +38,11 @@ class CloudEngine : public Engine {
     if (!s.ready()) { reset(); return; }
 
     // Per-block settings.
-    const float sizeOut = 0.015f * kSampleRate * std::pow(400.0f / 15.0f, clamp(p.timbre, 0.0f, 1.0f));
-    const float rate = 2.0f * std::pow(60.0f, clamp(p.macro, 0.0f, 1.0f));   // grains/s
+    // libm only when its inputs move (exact keys: same values as before).
+    if (p.timbre != size_key_) { size_key_ = p.timbre; size_out_ = 0.015f * kSampleRate * std::pow(400.0f / 15.0f, clamp(p.timbre, 0.0f, 1.0f)); }
+    if (p.macro != rate_key_) { rate_key_ = p.macro; rate_ = 2.0f * std::pow(60.0f, clamp(p.macro, 0.0f, 1.0f)); }
+    const float sizeOut = size_out_;
+    const float rate = rate_;   // grains/s
     const float meanGap = kSampleRate / rate;
     const float m = clamp(p.morph, 0.0f, 0.9999f) * 5.0f;
     static constexpr int kZones[5] = {0, 1, 2, 5, 6};
@@ -47,7 +50,8 @@ class CloudEngine : public Engine {
     const int zone = kZones[band];
     const float character = m - (float)band;
     const bool melodic = zone == 0 || zone == 2;
-    const float root = semitonesToRatio(p.note - 60.0f) * ((float)SampleStore::kRate / kSampleRate);
+    if (p.note != root_key_) { root_key_ = p.note; root_ = semitonesToRatio(p.note - 60.0f) * ((float)SampleStore::kRate / kSampleRate); }
+    const float root = root_;
     const float centre = clamp(p.harmonics, 0.0f, 1.0f);
 
     if (p.trigger & kTriggerRising) {
@@ -169,6 +173,7 @@ class CloudEngine : public Engine {
   }
 
   Grain grains_[kGrains];
+  float size_key_ = -1.0f, size_out_ = 0.0f, rate_key_ = -1.0f, rate_ = 0.0f, root_key_ = -1000.0f, root_ = 1.0f;
   ArsGapGenerator gaps_;
   float countdown_ = 0.0f;
   float gain_ = 0.0f;

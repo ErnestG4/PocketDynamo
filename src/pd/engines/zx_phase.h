@@ -104,8 +104,14 @@ class ZxPhaseEngine : public Engine {
 
     // Two octaves below the played pitch: XOR interference reads high.
     // Pitch is read per block with no smoothing, on purpose.
-    float dt1 = clamp(noteToDt(p.note - 24.0f + kick_), 0.0f, 0.2f);
-    kick_ *= std::pow(kKickDecay, (float)size * (1.0f / kPlaitsBlock));
+    // The per-block maths is cached on its exact inputs (libm, a double
+    // division and two 64-bit divisions are hundreds of cycles each on this
+    // core, eight voices a block): same values, computed only on a change.
+    const float pitch = p.note - 24.0f + kick_;
+    if (pitch != dt1_key_) { dt1_key_ = pitch; dt1_ = clamp(noteToDt(pitch), 0.0f, 0.2f); }
+    const float dt1 = dt1_;
+    if (size != kick_size_) { kick_size_ = size; kick_mul_ = std::pow(kKickDecay, (float)size * (1.0f / kPlaitsBlock)); }
+    kick_ *= kick_mul_;
     if (kick_ < 0.05f) kick_ = 0.0f;
     const uint32_t increment1 = (uint32_t)(dt1 * kTwo30);
     // Osc 2 = osc 1 x p/q exactly, plus the beat spread over the q cycles
@@ -113,19 +119,27 @@ class ZxPhaseEngine : public Engine {
     // notes, where a few Hz would be a detune rather than a beat).
     const Ratio r = kRatioLadder[interval_];
     beat_hz = std::min(beat_hz, 0.03f * dt1 * kSampleRate);
-    uint64_t inc2 = (uint64_t)increment1 * r.p / r.q +
-                    (uint64_t)(beat_hz / (float)r.q * (kTwo30 / kSampleRate));
-    if (noise_mode_) inc2 *= (uint64_t)kNoiseClockRatio;
-    const uint32_t increment2 = (uint32_t)std::min<uint64_t>(inc2, (uint64_t)(0.24f * kTwo30));
+    if (increment1 != inc2_key1_ || interval_ != inc2_key_step_ || beat_hz != inc2_key_beat_ ||
+        noise_mode_ != inc2_key_noise_) {
+      inc2_key1_ = increment1; inc2_key_step_ = interval_; inc2_key_beat_ = beat_hz; inc2_key_noise_ = noise_mode_;
+      uint64_t inc2 = (uint64_t)increment1 * r.p / r.q +
+                      (uint64_t)(beat_hz / (float)r.q * (kTwo30 / kSampleRate));
+      if (noise_mode_) inc2 *= (uint64_t)kNoiseClockRatio;
+      increment2_ = (uint32_t)std::min<uint64_t>(inc2, (uint64_t)(0.24f * kTwo30));
+    }
+    const uint32_t increment2 = increment2_;
 
     // The flanger's tap, 1/k of osc 1's period back, read straight off the
     // phase accumulators (osc 2 has moved its own share of that time), so
     // the delay is exact at any pitch and needs no buffer. In noise mode the
     // tap counts osc 2's wraps back into the LFSR's output history.
-    const uint32_t tap1 = (uint32_t)(4294967296.0 / kCombHarmonic[comb_ < 0 ? 0 : comb_]);
-    const uint64_t tap2_long = (uint64_t)tap1 * increment2 / (increment1 ? increment1 : 1u);
-    const uint32_t tap2 = (uint32_t)tap2_long;
-    const uint32_t tap2_wraps = (uint32_t)(tap2_long >> 32);
+    const uint32_t tap1 = kCombTap[comb_ < 0 ? 0 : comb_];
+    if (tap1 != tap_key1_ || increment1 != tap_key_inc1_ || increment2 != tap_key_inc2_) {
+      tap_key1_ = tap1; tap_key_inc1_ = increment1; tap_key_inc2_ = increment2;
+      tap2_long_ = (uint64_t)tap1 * increment2 / (increment1 ? increment1 : 1u);
+    }
+    const uint32_t tap2 = (uint32_t)tap2_long_;
+    const uint32_t tap2_wraps = (uint32_t)(tap2_long_ >> 32);
 
     const uint32_t ghost_duty = macro > 0.5f
         ? (uint32_t)((macro * 2.0f - 1.0f) * 0.35f * kTwo32)
@@ -285,6 +299,12 @@ class ZxPhaseEngine : public Engine {
   // Flanger comb positions: the delay is 1/k of osc 1's period.
   static constexpr int kCombs = 11;
   static constexpr uint8_t kCombHarmonic[kCombs] = {2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 32};
+  // 2^32 / k, at compile time (a double division is soft-float here).
+  static constexpr uint32_t kCombTap[kCombs] = {
+      (uint32_t)(4294967296.0 / 2), (uint32_t)(4294967296.0 / 3), (uint32_t)(4294967296.0 / 4),
+      (uint32_t)(4294967296.0 / 5), (uint32_t)(4294967296.0 / 6), (uint32_t)(4294967296.0 / 8),
+      (uint32_t)(4294967296.0 / 10), (uint32_t)(4294967296.0 / 12), (uint32_t)(4294967296.0 / 16),
+      (uint32_t)(4294967296.0 / 24), (uint32_t)(4294967296.0 / 32)};
   static constexpr uint32_t kDuty1 = (uint32_t)(14.0 / 32.0 * 4294967296.0);
   // AND needs overlap: a wider osc 1 keeps unison drift from gating to
   // silence (14/32 + 14/32 < 1 left an eighth of every beat dead).
@@ -303,6 +323,16 @@ class ZxPhaseEngine : public Engine {
   uint32_t sweep_count_ = 0;
   float dc_main_ = 0.0f, dc_aux_ = 0.0f;
   float kick_ = 0.0f;       // TRIG kick-slide, semitones above played pitch
+  // Cached per-block maths and the exact inputs it came from.
+  float dt1_key_ = -1000.0f, dt1_ = 0.0f;
+  size_t kick_size_ = 0;
+  float kick_mul_ = 1.0f;
+  uint32_t inc2_key1_ = 0xFFFFFFFFu, increment2_ = 0;
+  int inc2_key_step_ = -1;
+  float inc2_key_beat_ = -1.0f;
+  bool inc2_key_noise_ = false;
+  uint32_t tap_key1_ = 0, tap_key_inc1_ = 0xFFFFFFFFu, tap_key_inc2_ = 0xFFFFFFFFu;
+  uint64_t tap2_long_ = 0;
 };
 
 }  // namespace pd

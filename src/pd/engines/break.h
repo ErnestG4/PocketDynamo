@@ -51,7 +51,8 @@ class BreakEngine : public Engine {
     const uint32_t len = s.length();
     const float stepSrc = (float)len / kSteps;                       // take samples a step
     const float stepOut = 60.0f * kSampleRate / (clamp(p.tempo, 20.0f, 400.0f) * kStepsPerBeat);
-    const float rate = stepSrc / stepOut * semitonesToRatio(p.note - 60.0f);
+    if (p.note != ratio_key_) { ratio_key_ = p.note; ratio_ = semitonesToRatio(p.note - 60.0f); }
+    const float rate = stepSrc / stepOut * ratio_;
     const int64_t inc = (int64_t)(rate * 4294967296.0f);
     const float gate = 0.15f + 0.85f * clamp(p.morph, 0.0f, 1.0f);
     lofi_.set(p.macro);
@@ -157,6 +158,7 @@ class BreakEngine : public Engine {
   bool resting_ = true, ratDone_ = true;
   float comp_ = 0.0f, last_ = 0.0f;
   Lofi lofi_;
+  float ratio_key_ = -1000.0f, ratio_ = 1.0f;   // semitonesToRatio, on its exact input
 };
 
 }  // namespace pd

@@ -42,13 +42,18 @@ class SamplerEngine : public Engine {
     else start = (uint32_t)(clamp(p.harmonics, 0.0f, 1.0f) * 0.95f * (float)len);
     const float remaining = (float)(len - 1 - start);
     constexpr float kMinLen = 0.02f * SampleStore::kRate;
-    const float span = remaining <= kMinLen ? remaining
-        : kMinLen * std::pow(remaining / kMinLen, clamp(p.timbre, 0.0f, 1.0f));
+    // libm only when its inputs move (exact keys: same values as before).
+    if (remaining != span_key_rem_ || p.timbre != span_key_t_) {
+      span_key_rem_ = remaining; span_key_t_ = p.timbre;
+      span_ = remaining <= kMinLen ? remaining : kMinLen * std::pow(remaining / kMinLen, clamp(p.timbre, 0.0f, 1.0f));
+    }
+    const float span = span_;
     const uint32_t end = start + std::max<uint32_t>(2, (uint32_t)span);
     const Mode mode = (Mode)std::min(3, (int)(clamp(p.morph, 0.0f, 1.0f) * 4.0f));
 
     // Speed: C4 = as recorded; the take is at half the output rate.
-    const float ratio = semitonesToRatio(p.note - 60.0f) * ((float)SampleStore::kRate / kSampleRate);
+    if (p.note != ratio_key_) { ratio_key_ = p.note; ratio_ = semitonesToRatio(p.note - 60.0f) * ((float)SampleStore::kRate / kSampleRate); }
+    const float ratio = ratio_;
     const int64_t inc = (int64_t)(ratio * 4294967296.0f);
     const int64_t s0 = (int64_t)start << 32, s1 = (int64_t)end << 32;
 
@@ -130,6 +135,8 @@ class SamplerEngine : public Engine {
   int dir_ = 1;
   bool done_ = true;
   float comp_ = 0.0f, last_ = 0.0f;
+  float span_key_rem_ = -1.0f, span_key_t_ = -1.0f, span_ = 0.0f;
+  float ratio_key_ = -1000.0f, ratio_ = 1.0f;
   Lofi lofi_;
 };
 

@@ -1135,41 +1135,41 @@ void draw(const pd::audio::Stats& s) {
 
 // --- serial ---
 
+// Serial 'B': each engine plays 8 held notes on the live instrument, on the
+// audio core, muted and with the effects off, and reports the render task's
+// own load and peak over a second (the peak includes the 8 strikes). This is
+// what playing costs, cache contention and all, and needs no second voice
+// pool. The volume, echo and effects are restored after; the bench's events
+// go straight to the synth, so a running looper doesn't record them.
 void cpuBench() {
-  // Borrowed from the heap for the bench only: a second voice pool held for
-  // good would cost 14.5 KB of RAM that BLE needs.
-  Synth* pool = new (std::nothrow) Synth;
-  if (!pool) { Serial.printf("bench: no room for a voice pool (largest block %lu)\n", (unsigned long)ESP.getMaxAllocHeap()); return; }
-  Synth& bench = *pool;
-  constexpr int kBlocks = 1000;
-  constexpr uint32_t kCyclesPerBlock = 240000000ULL * pd::audio::kBlock / pd::audio::kSampleRate;
+  auto push = [](pd::EventType t, uint8_t a, uint8_t b, float v) {
+    while (!g_events.push(pd::Event{t, a, b, v})) vTaskDelay(1);
+  };
+  const int dac = g_ui.dacVol;
+  setDac(0);
+  push(pd::EventType::Echo, 0, 0, 0.0f);
+  for (int b = 0; b < kFxBars; ++b) push(pd::EventType::Fx, (uint8_t)b, (uint8_t)(b < 3 ? g_ui.fxType[b] : 0), 0.0f);
+  push(pd::EventType::AllOff, 0, 0, 0.0f);
+  constexpr uint8_t kTag = 100;   // clear of the keys', MIDI's and the arp's tags
   for (int eng = 0; eng < (int)pd::EngineId::Count; ++eng) {
-    bench.handle({pd::EventType::AllOff, 0, 0, 0.0f});
-    for (int i = 0; i < 2000; ++i) { float o[pd::audio::kBlock]; bench.render(o); }   // drain tails
-    bench.handle({pd::EventType::Engine, (uint8_t)eng, 0, 0.0f});
-    for (int p = 0; p < (int)pd::Param::Count; ++p)
-      bench.handle({pd::EventType::Param, (uint8_t)p, 0, effective(p)});
-    for (int n = 0; n < kVoices; ++n)
-      bench.handle({pd::EventType::NoteOn, (uint8_t)(n + 1), 100, 48.0f + 4 * n});
-    float o[pd::audio::kBlock];
-    uint32_t sum = 0, peak = 0, over = 0, first = 0;
-    int peakAt = -1;
-    for (int b = 0; b < kBlocks; ++b) {
-      const uint32_t c0 = ESP.getCycleCount();
-      bench.render(o);
-      const uint32_t dc = ESP.getCycleCount() - c0;
-      sum += dc;
-      if (dc > peak) { peak = dc; peakAt = b; }
-      if (dc > kCyclesPerBlock) ++over;
-      if (b == 0) first = dc;
-    }
-    Serial.printf("bench engine=%s voices=%d avg=%.1f%% peak=%.1f%% (block %d) first=%.1f%% over100=%lu "
-                  "of one core per block (%lu cycles avg)\n",
-                  pd::engineName((pd::EngineId)eng), bench.activeVoices(),
-                  100.0f * sum / kBlocks / kCyclesPerBlock, 100.0f * peak / kCyclesPerBlock, peakAt,
-                  100.0f * first / kCyclesPerBlock, (unsigned long)over, (unsigned long)(sum / kBlocks));
+    push(pd::EventType::Engine, (uint8_t)eng, 0, 0.0f);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    const uint32_t xrun0 = pd::audio::takeStats().underruns;   // and start a fresh window
+    for (int n = 0; n < kVoices; ++n) push(pd::EventType::NoteOn, (uint8_t)(kTag + n), 100, 48.0f + 4 * n);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    const auto st = pd::audio::takeStats();
+    Serial.printf("bench engine=%s voices=%d avg=%lu.%lu%% peak=%lu.%lu%% xrun=+%lu (live, 1 s, peak incl. the strikes)\n",
+                  pd::engineName((pd::EngineId)eng), g_synth.activeVoices(),
+                  (unsigned long)(st.loadAvgPermil / 10), (unsigned long)(st.loadAvgPermil % 10),
+                  (unsigned long)(st.loadPeakPermil / 10), (unsigned long)(st.loadPeakPermil % 10),
+                  (unsigned long)(st.underruns - xrun0));
+    for (int n = 0; n < kVoices; ++n) push(pd::EventType::NoteOff, (uint8_t)(kTag + n), 0, 0.0f);
   }
-  delete pool;
+  push(pd::EventType::AllOff, 0, 0, 0.0f);
+  push(pd::EventType::Engine, (uint8_t)g_ui.engine, 0, 0.0f);
+  for (int b = 0; b < kFxBars; ++b) { g_ui.fxSent[b] = -1.0f; if (b < 3) g_ui.fxTypeSent[b] = -1; }
+  sendEcho();   // and pushParams(): the effects as they were
+  setDac(dac);
 }
 
 void printState(const pd::audio::Stats& s) {
