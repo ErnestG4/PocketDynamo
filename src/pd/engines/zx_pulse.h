@@ -118,30 +118,30 @@ class ZxPulseEngine : public Engine {
       amps[echo_slot] = kEchoAmp;
     }
 
-    for (size_t i = 0; i < size; ++i) {
-      if (tick_.next()) {
-        dt_history_[history_pos_] = dts[echo_src];
-        width_history_[history_pos_] = duties[echo_src];
-        history_pos_ = (history_pos_ + 1) & (kHistorySize - 1);
-        ++tick_count_;
-        if (arp_mode_ && (tick_count_ % (uint32_t)arp_divider) == 0) {
-          arp_index_ = (arp_index_ + 1) & 3;
-          if (arp_slot >= 0) {
-            const float dt = clamp(f0 * ratios[arp_index_ & 3] * 2.0f * pull_ratio, 0.0f, kMaxDt);
-            dts[arp_slot] = dt;
-            duties[arp_slot] = clampDuty(width * dt, dt);
-          }
+    // Channel by channel, a block at a time (each channel's phase stays in a
+    // register); the block splits at the 50 Hz tick, where the echo history
+    // records and the arp may re-pitch. Each sample still sums its channels
+    // in order from 0, so the output is unchanged.
+    for (size_t i = 0; i < size; ++i) out[i] = aux[i] = 0.0f;
+    const int32_t tickAt = tick_.pending();
+    const size_t split = tickAt < (int32_t)size ? (size_t)tickAt : size;
+    for (int v = 0; v < n; ++v) channels_[v].run(dts[v], duties[v], amps[v], out, aux, 0, split);
+    if (split < size) {
+      dt_history_[history_pos_] = dts[echo_src];
+      width_history_[history_pos_] = duties[echo_src];
+      history_pos_ = (history_pos_ + 1) & (kHistorySize - 1);
+      ++tick_count_;
+      if (arp_mode_ && (tick_count_ % (uint32_t)arp_divider) == 0) {
+        arp_index_ = (arp_index_ + 1) & 3;
+        if (arp_slot >= 0) {
+          const float dt = clamp(f0 * ratios[arp_index_ & 3] * 2.0f * pull_ratio, 0.0f, kMaxDt);
+          dts[arp_slot] = dt;
+          duties[arp_slot] = clampDuty(width * dt, dt);
         }
       }
-      float clean = 0.0f, nasty = 0.0f;
-      for (int v = 0; v < n; ++v) {
-        float naive;
-        clean += amps[v] * channels_[v].next(dts[v], duties[v], &naive);
-        nasty += amps[v] * naive;
-      }
-      out[i] = clean;
-      aux[i] = nasty;
+      for (int v = 0; v < n; ++v) channels_[v].run(dts[v], duties[v], amps[v], out, aux, split, size);
     }
+    tick_.advance((int32_t)size);
   }
 
  private:

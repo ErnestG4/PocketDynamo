@@ -72,7 +72,9 @@ class SamplerEngine : public Engine {
     float comp = comp_, last = last_;
     auto sampleAt = [&s](int64_t at) {
       const uint32_t idx = (uint32_t)(at >> 32);
-      const float a = (float)s.at(idx), b = (float)s.at(idx + 1);
+      int ia, ib;
+        s.pair(idx, &ia, &ib);
+        const float a = (float)ia, b = (float)ib;
       return a + (float)((uint32_t)at >> 8) * (1.0f / 16777216.0f) * (b - a);
     };
     for (size_t i = 0; i < n; ++i) {

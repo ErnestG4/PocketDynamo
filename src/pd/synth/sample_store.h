@@ -74,6 +74,8 @@ class SampleStore {
   uint32_t length() const { return length_; }
   // Sample i, as 16-bit (low 4 bits zero).
   int16_t at(uint32_t i) const { return packed_.at(i); }
+  // Samples i and i + 1 (i + 1 < kCapacity), for interpolation.
+  void pair(uint32_t i, int* a, int* b) const { packed_.pair(i, a, b); }
   // Store sample i from a 16-bit value, rounded to 12 bits (writer only).
   void put(uint32_t i, int v) { packed_.put(i, v); }
   float gain() const { return gain_; }   // to apply on read: normalizes the take

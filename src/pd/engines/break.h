@@ -61,34 +61,57 @@ class BreakEngine : public Engine {
     const float scale = s.gain() * (1.0f / 32768.0f) * kLevel;
     const int64_t maxPos = (int64_t)(len - 2) << 32;
     constexpr float kFadeRecip = 1.0f / (0.003f * kSampleRate);   // 3 ms
+    // The loop runs on locals (out/aux are float stores, so members would be
+    // reloaded every sample); the two mid-loop events, a new cell and the
+    // 32nd re-strike, sync them through the members around their calls.
+    int64_t pos = pos_;
+    int dir = dir_;
+    float level = level_, comp = comp_, last = last_, stepPhase = stepPhase_, cellAge = cellAge_;
+    float cellLenOut = cellLenOut_;
+    bool resting = resting_, ratDone = ratDone_;
+    auto toMembers = [&] { pos_ = pos; dir_ = dir; level_ = level; comp_ = comp; last_ = last; cellAge_ = cellAge; };
+    auto fromMembers = [&] {
+      pos = pos_; dir = dir_; comp = comp_; cellAge = cellAge_;
+      cellLenOut = cellLenOut_; resting = resting_; ratDone = ratDone_;
+    };
     for (size_t i = 0; i < n; ++i) {
-      if (stepPhase_ >= stepOut) {
-        stepPhase_ -= stepOut;
+      if (stepPhase >= stepOut) {
+        stepPhase -= stepOut;
         step_ = (step_ + 1) % kSteps;
-        if (pattern_.src[step_] != chop::Pattern::kInterior) startCell(s, stepSrc, stepOut, false);
+        if (pattern_.src[step_] != chop::Pattern::kInterior) {
+          toMembers(); startCell(s, stepSrc, stepOut, false); fromMembers();
+        }
       }
       // 32nd double: one-step cells flagged rat re-strike at half a step.
-      if (!ratDone_ && cellAge_ >= 0.5f * stepOut) { ratDone_ = true; jump(s, cellStart_); }
+      if (!ratDone && cellAge >= 0.5f * stepOut) {
+        ratDone = true;
+        ratDone_ = true;
+        toMembers(); jump(s, cellStart_); fromMembers();
+      }
 
       // Gate: full inside its share of the cell, then a 3 ms fade.
-      const float target = resting_ || cellAge_ > gate * cellLenOut_ ? 0.0f : 1.0f;
-      level_ += target > level_ ? std::min(kFadeRecip, target - level_) : std::max(-kFadeRecip, target - level_);
+      const float target = resting || cellAge > gate * cellLenOut ? 0.0f : 1.0f;
+      level += target > level ? std::min(kFadeRecip, target - level) : std::max(-kFadeRecip, target - level);
 
       float x = 0.0f;
-      if (pos_ >= 0 && pos_ <= maxPos) {
-        const uint32_t idx = (uint32_t)(pos_ >> 32);
-        const float a = (float)s.at(idx), b = (float)s.at(idx + 1);
-        x = (a + (float)((uint32_t)pos_ >> 8) * (1.0f / 16777216.0f) * (b - a)) * scale;
+      if (pos >= 0 && pos <= maxPos) {
+        const uint32_t idx = (uint32_t)(pos >> 32);
+        int ia, ib;
+        s.pair(idx, &ia, &ib);
+        const float a = (float)ia, b = (float)ib;
+        x = (a + (float)((uint32_t)pos >> 8) * (1.0f / 16777216.0f) * (b - a)) * scale;
       }
-      x = clamp(x * level_ + comp_, -1.0f, 1.0f);
-      comp_ *= 0.93f;
-      last_ = x;
+      x = clamp(x * level + comp, -1.0f, 1.0f);
+      comp *= 0.93f;
+      last = x;
       aux[i] = x;
       out[i] = lofi_.process(x);
-      pos_ += dir_ * inc;
-      stepPhase_ += 1.0f;
-      cellAge_ += 1.0f;
+      pos += dir * inc;
+      stepPhase += 1.0f;
+      cellAge += 1.0f;
     }
+    toMembers();
+    stepPhase_ = stepPhase;
   }
 
  private:

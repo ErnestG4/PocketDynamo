@@ -58,11 +58,21 @@ class TapeEcho {
     // feedback path and one write per output pair; the wet signal goes back
     // up to 48 kHz by linear interpolation (the first of each pair half-way
     // from the last pair's value).
+    // The wow (0.55 Hz) moves 0.002 rad a block: its sine is taken at the
+    // block's first and last tape steps and ramped between (off from the
+    // per-step sine by ~1e-6 samples of delay). The glide stays per step: a
+    // ramped one would wobble the delay at the block rate mid-glide.
     const float* sine = sineTable().v;
+    const uint32_t steps = (uint32_t)(n / 2);
+    const float wowFirst = sineLut(sine, wow_ + kWowInc);
+    const float wowLast = sineLut(sine, wow_ + kWowInc * steps);
+    const float wowStep = steps > 1 ? (wowLast - wowFirst) / (float)(steps - 1) : 0.0f;
+    float wow = wowFirst;
+    wow_ += kWowInc * steps;
     for (size_t i = 0; i + 1 < n; i += 2) {
       time_ += kGlide * (target_ - time_);
-      wow_ += kWowInc;
-      const float delay = (room ? roomTime : time_) + kWowDepth * (1.0f + sineLut(sine, wow_));
+      const float delay = (room ? roomTime : time_) + kWowDepth * (1.0f + wow);
+      wow += wowStep;
       float wet = readAt(delay);
       if (space > 0.0f) {
         // More heads, then diffusion: the repeat blurs into a wash.
@@ -97,8 +107,10 @@ class TapeEcho {
     if (r < 0.0f) r += (float)kLength;
     const uint32_t ri = (uint32_t)r;
     const float frac = r - (float)ri;
-    const uint32_t rj = ri + 1 < kLength ? ri + 1 : 0;
-    const float a = tape_.at(ri), b = tape_.at(rj);
+    int ia, ib;
+    if (ri + 1 < kLength) tape_.pair(ri, &ia, &ib);
+    else { ia = tape_.at(ri); ib = tape_.at(0); }   // the loop's seam
+    const float a = (float)ia, b = (float)ib;
     return (a + frac * (b - a)) * (1.0f / 32768.0f);
   }
 

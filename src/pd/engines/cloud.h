@@ -106,7 +106,9 @@ class CloudEngine : public Engine {
       for (size_t i = 0; i < n; ++i) {
         // Window: (4p(1-p))^2, a smooth bump, zero with zero slope at both ends.
         const float q = 4.0f * ph * (1.0f - ph);
-        const float a = (float)s.at(idx), b = (float)s.at(idx + 1);
+        int ia, ib;
+        s.pair(idx, &ia, &ib);
+        const float a = (float)ia, b = (float)ib;
         dst[i] += q * q * (a + (float)(frac >> 8) * (1.0f / 16777216.0f) * (b - a));
         const uint32_t nf = frac + incF;
         idx += incI + (nf < frac);

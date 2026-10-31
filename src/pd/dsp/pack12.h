@@ -16,6 +16,18 @@ struct Pack12 {
     return (i & 1) ? (int16_t)((uint16_t)p[2] << 8 | (p[1] & 0xF0))
                    : (int16_t)((uint16_t)(p[1] & 0x0F) << 12 | (uint16_t)p[0] << 4);
   }
+  // Samples i and i + 1 together (an interpolated read): one address, one
+  // parity test. Same values as at(i), at(i + 1).
+  inline void pair(uint32_t i, int* a, int* b) const {
+    const uint8_t* p = bytes + (i >> 1) * 3;
+    if (i & 1) {   // i is the second of its pair; i + 1 starts the next
+      *a = (int16_t)((uint16_t)p[2] << 8 | (p[1] & 0xF0));
+      *b = (int16_t)((uint16_t)(p[4] & 0x0F) << 12 | (uint16_t)p[3] << 4);
+    } else {       // both in these three bytes
+      *a = (int16_t)((uint16_t)(p[1] & 0x0F) << 12 | (uint16_t)p[0] << 4);
+      *b = (int16_t)((uint16_t)p[2] << 8 | (p[1] & 0xF0));
+    }
+  }
   void put(uint32_t i, int v) {
     int r = (v + 8) >> 4;
     r = r > 2047 ? 2047 : (r < -2048 ? -2048 : r);

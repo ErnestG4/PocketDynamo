@@ -45,6 +45,24 @@ class PinChannel {
     return naive + polyBlep(t, dt) - polyBlep(tf, dt);
   }
 
+  // A run of samples [from, to) at fixed dt and duty, mixed in: clean[i] +=
+  // amp * the band-limited pin, nasty[i] += amp * the raw one. The phase
+  // stays in a register; the arithmetic is next()'s, sample for sample.
+  inline void run(float dt, float duty, float amp, float* clean, float* nasty, size_t from, size_t to) {
+    float ph = phase_;
+    for (size_t i = from; i < to; ++i) {
+      ph += dt;
+      if (ph >= 1.0f) ph -= 1.0f;
+      const float t = ph;
+      const float naive = t < duty ? 1.0f - duty : -duty;
+      float tf = t - duty;
+      if (tf < 0.0f) tf += 1.0f;
+      clean[i] += amp * (naive + polyBlep(t, dt) - polyBlep(tf, dt));
+      nasty[i] += amp * naive;
+    }
+    phase_ = ph;
+  }
+
  private:
   float phase_ = 0.0f;
 };
@@ -57,6 +75,13 @@ class FrameTick {
   inline bool next() {
     if (--counter_ <= 0) { counter_ = kPeriod; return true; }
     return false;
+  }
+  // Block-wise use: the sample index at which next() would next fire, then
+  // advance(n) to account for n samples at once (exactly as n next()s).
+  inline int32_t pending() const { return counter_ - 1; }
+  inline void advance(int32_t n) {
+    counter_ -= n;
+    while (counter_ <= 0) counter_ += kPeriod;
   }
   // 50 Hz, the frame rate of the original drivers (957 at Plaits' rate).
   static constexpr int32_t kPeriod = (int32_t)(kSampleRate / 50.0f + 0.5f);
