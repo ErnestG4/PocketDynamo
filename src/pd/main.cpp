@@ -207,7 +207,8 @@ void send(pd::EventType t, uint8_t a, uint8_t b = 0, float v = 0.0f) {
 }
 
 // Looper replays go straight to the synth (not back into the looper).
-void emitLooped(const pd::Event& e) { g_events.push(e); }
+// It waits for room rather than dropping: a stop's releases come in a burst.
+void emitLooped(const pd::Event& e) { while (!g_events.push(e)) vTaskDelay(1); }
 
 void flash(const char* m) { g_ui.msg = m; g_ui.msgUntil = millis() + 1500; g_ui.dirty = true; }
 
@@ -1147,6 +1148,7 @@ void cpuBench() {
   };
   const int dac = g_ui.dacVol;
   setDac(0);
+  allOff();   // through the UI, so its idea of what's sounding (the arp's too) stays true
   push(pd::EventType::Echo, 0, 0, 0.0f);
   for (int b = 0; b < kFxBars; ++b) push(pd::EventType::Fx, (uint8_t)b, (uint8_t)(b < 3 ? g_ui.fxType[b] : 0), 0.0f);
   push(pd::EventType::AllOff, 0, 0, 0.0f);

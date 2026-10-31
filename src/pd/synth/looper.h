@@ -60,7 +60,15 @@ class Looper {
         break;
       }
       case Playing: state_ = Overdub; break;
-      case Overdub: state_ = Playing; break;   // new events join at the next lap
+      case Overdub: {   // new events join at the next lap
+        // A note still held as overdub ends had its NoteOn recorded but
+        // won't have its NoteOff: end it here, or every lap would strike it
+        // again and pile up voices.
+        const uint32_t t = (now - lapStart_) % lap_;
+        for (int i = 0; i < nHeld; ++i) add(t, {EventType::NoteOff, held[i], 0, 0.0f});
+        state_ = Playing;
+        break;
+      }
       case Stopped:
         sort(); playable_ = count_;
         state_ = Playing; start_ = now; lapStart_ = now; cursor_ = 0;
@@ -74,10 +82,16 @@ class Looper {
   void stop(Emit emit) {
     if (state_ == Stopped || state_ == Recording) { state_ = Empty; count_ = playable_ = 0; lap_ = 0; return; }
     if (state_ == Empty) return;
-    // Only the loop tags left sounding: a burst of 127 would overrun the
-    // synth's event queue.
+    // Every tag the loop plays, plus any it left sounding: a stray NoteOff
+    // in the loop can clear a tag's sounding bit while another of its
+    // voices still rings, so the bits alone can't be trusted. (emit must
+    // not drop events: the synth's queue is shorter than 127.)
+    uint32_t tags[4] = {sounding_[0], sounding_[1], sounding_[2], sounding_[3]};
+    for (int i = 0; i < count_; ++i)
+      if (ev_[i].type == EventType::NoteOn && ev_[i].a < kLoopTagOffset)
+        tags[ev_[i].a >> 5] |= 1u << (ev_[i].a & 31);
     for (int t = 0; t < 128; ++t)
-      if (sounding_[t >> 5] & (1u << (t & 31))) emit(Event{EventType::NoteOff, (uint8_t)(t + kLoopTagOffset), 0, 0.0f});
+      if (tags[t >> 5] & (1u << (t & 31))) emit(Event{EventType::NoteOff, (uint8_t)(t + kLoopTagOffset), 0, 0.0f});
     for (auto& w : sounding_) w = 0;
     state_ = Stopped;
   }

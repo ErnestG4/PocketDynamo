@@ -1,5 +1,6 @@
 // Host test: g++ -std=c++17 -O2 -I src/pd src/pd/synth/looper_test.cpp -o t && ./t
 #include "looper.h"
+#include "instrument.h"
 
 #include <cassert>
 #include <cstdio>
@@ -99,6 +100,43 @@ int main() {
   check(log.got.size() == 1 && log.got[0].second.a == 4 + Looper::kLoopTagOffset, "no burst on a late close");
   for (uint32_t t = 1150000; t < 2200000; t += 1000) { log.now = t; late.service(t, emit); }
   check(log.got.size() == 3, "both events next lap");
+  // A note held while overdub is switched off: its NoteOn is in the loop
+  // but its NoteOff was played after recording stopped. The loop must still
+  // end it (at the switch), so laps don't pile up voices, and stop must
+  // leave nothing sounding. Played into a real instrument.
+  {
+    static Instrument<8, 32> inst;
+    Looper lo;
+    uint32_t now = 0;
+    auto emitTo = [&](const Event& e) { inst.handle(e); };
+    int peak = 0;   // voices, sampled every block
+    auto run = [&](uint32_t untilUs) {   // advance time block by block, servicing the looper
+      float out[32];
+      while (now < untilUs) { lo.service(now, emitTo); inst.render(out); peak = std::max(peak, inst.activeVoices()); now += 667; }
+    };
+    auto live = [&](const Event& e) { inst.handle(e); lo.capture(now, e); };
+    lo.press(now, kBeat, nullptr, 0, emitTo);                   // record
+    run(100000); live({EventType::NoteOn, 5, 100, 60.0f});
+    run(300000); live({EventType::NoteOff, 5, 0, 0.0f});
+    run(950000);
+    lo.press(now, kBeat, nullptr, 0, emitTo);                   // close: a 1 s lap
+    run(1200000);
+    lo.press(now, kBeat, nullptr, 0, emitTo);                   // overdub on
+    run(1300000); live({EventType::NoteOn, 9, 100, 67.0f});     // B goes down in the overdub...
+    run(1500000);
+    const uint8_t held[1] = {9};
+    lo.press(now, kBeat, held, 1, emitTo);                      // ...overdub off, B still held
+    run(1700000); live({EventType::NoteOff, 9, 0, 0.0f});       // B up, after recording stopped
+    run(6000000);                                               // four more laps
+    peak = 0;
+    run(now + 3000000);   // three laps
+    const int peakVoices = peak;
+    check(peakVoices >= 1 && peakVoices <= 2, "the loop plays both notes and doesn't pile up voices lap after lap");
+    lo.stop(emitTo);
+    run(now + 3000000);   // release tails
+    check(inst.activeVoices() == 0, "stop leaves nothing sounding");
+    printf("overdub-held note: peak %d voices, %d after stop\n", peakVoices, inst.activeVoices());
+  }
   printf("looper ok\n");
   return 0;
 }
