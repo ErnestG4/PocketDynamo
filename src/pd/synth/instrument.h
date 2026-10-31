@@ -81,6 +81,9 @@ class Instrument {
   // Handles one event and returns what it costs the render as strikes (0 for
   // anything but a NoteOn): the render task budgets them per block.
   int handle(const Event& e) {
+    // Every event's value is a float that some engine turns into an index or
+    // a phase step; a NaN or inf one is dropped here, at the boundary.
+    if (!isFinite(e.value)) return 0;
     switch (e.type) {
       case EventType::NoteOn:    return noteOn(e.a, e.b, e.value);
       case EventType::NoteOff:   noteOff(e.a); break;
@@ -140,6 +143,18 @@ class Instrument {
       v.trigger = false;
       Engine& eng = v.engineFor();
       eng.render(p, main, aux, kBlock);
+      // A voice that went NaN or infinite is dropped and its engine rebuilt,
+      // so one bad float can't poison the bus and the effects' state. NaN in
+      // an engine's state carries to the end of its block, so the last sample
+      // tells; anything shorter-lived is caught on the bus below.
+      if (!isFinite(main[kBlock - 1])) {
+        v.gated = false;
+        v.env.kill();
+        v.build(v.engine);
+        --active;
+        faults_ = faults_ + 1;
+        continue;
+      }
       float g0, g1;
       v.env.advance(&g0, &g1);
       g0 *= v.gain; g1 *= v.gain;
@@ -149,6 +164,16 @@ class Instrument {
     active_ = active;
     if (fx_) fx_->process(out, kBlock);
     if (echo_) echo_->process(out, kBlock);
+    // The same guard on the bus: the effects start clean, and the block is
+    // silence instead of noise.
+    float bus = 0.0f;
+    for (size_t i = 0; i < kBlock; ++i) bus += out[i];
+    if (!isFinite(bus)) {
+      if (fx_) fx_->reset();
+      if (echo_) echo_->reset();
+      for (size_t i = 0; i < kBlock; ++i) out[i] = 0.0f;
+      faults_ = faults_ + 1;
+    }
     // Soft clip: cubic, unity slope at 0, reaching +-1 with zero slope at +-1.5.
     for (size_t i = 0; i < kBlock; ++i) {
       float x = clamp(out[i] * master_, -1.5f, 1.5f);
@@ -162,6 +187,9 @@ class Instrument {
   float param(Param p) const { return params_[(int)p]; }
   EngineId engine() const { return engine_; }
   int activeVoices() const { return active_; }
+  // Blocks or voices the NaN/inf guards have caught since boot (never, unless
+  // something is wrong).
+  uint32_t faults() const { return faults_; }
 
  private:
   // One engine per voice, built in place when the voice changes engine, so
@@ -244,6 +272,7 @@ class Instrument {
   MasterFx* fx_ = nullptr;
   uint32_t clock_ = 0;
   volatile int active_ = 0;
+  volatile uint32_t faults_ = 0;
 };
 
 }  // namespace pd

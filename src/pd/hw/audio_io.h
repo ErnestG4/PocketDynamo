@@ -32,8 +32,12 @@ bool begin(RenderFn fn);
 // Codec DAC digital volume, 0.5 dB steps: 0xBF = 0 dB, 0xFF = +32 dB.
 // I2C write — call from the control side, never from the render.
 bool setDacVolume(uint8_t reg);
-// Snapshot + reset the averaging window. Call from the UI side.
+// The window since the last call (load, peak, mic level), handed over by the
+// audio task at a block boundary; waits up to a block for it. Call from the
+// control side.
 Stats takeStats();
+// The least free stack the render task has had since boot, in bytes.
+uint32_t stackFreeMin();
 
 }  // namespace audio
 }  // namespace pd

@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include "core.h"
 #include "pack12.h"
@@ -39,6 +40,7 @@ class TapeEcho {
 
   // Delay in seconds (clamped to the tape), or <= 0 for off.
   void setTime(float seconds) {
+    if (!isFinite(seconds)) seconds = 0.0f;   // a NaN delay would read off the tape
     on_ = seconds > 0.0f;
     if (on_) target_ = clamp(seconds, 0.01f, kMaxSeconds) * kRate;
     if (time_ <= 0.0f) time_ = target_;   // first use: no glide from zero
@@ -47,6 +49,17 @@ class TapeEcho {
   void setMix(float mix) { mix_ = clamp(mix, 0.0f, 1.0f); }
   void setSpace(float space) { space_ = clamp(space, 0.0f, 1.0f); }
   bool on() const { return on_; }
+
+  // Clears the tape and the running state, keeping the settings: the
+  // instrument's NaN guard calls it.
+  void reset() {
+    std::memset(tape_.bytes, 0, sizeof tape_.bytes);   // in place: never a 36 KB temporary on the audio stack
+    for (auto& d : diffBuf_) d = 0;
+    lp_ = hp_ = lastWet_ = prevWet_ = feedback_ = 0.0f;
+    aa1_ = aa2_ = acc_ = 0.0f;
+    time_ = target_;
+    quietFor_ = kQuietSkip + 1;
+  }
 
   // Adds the echo to io in place (48 kHz, any n). Out of line, so it keeps its
   // IRAM section instead of being inlined into the instrument's render (a

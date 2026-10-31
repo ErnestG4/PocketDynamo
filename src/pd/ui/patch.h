@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "../dsp/core.h"
+
 namespace pd {
 namespace patch {
 
@@ -68,24 +70,33 @@ inline bool fromText(const char* text, Patch* out) {
       *eq = 0;
       const char* v = eq + 1;
       auto copy = [v](char* dst, size_t cap) { strncpy(dst, v, cap - 1); dst[cap - 1] = 0; };
+      // A number that isn't finite ("nan", "inf", or an overflow) keeps
+      // what was there: a hand-edited file must never put a NaN into the synth.
+      auto num = [v](float keep) { const float f = (float)atof(v); return isFinite(f) ? f : keep; };
       if (!strcmp(l, "engine")) copy(p.engine, sizeof p.engine);
       else if (!strcmp(l, "surface")) copy(p.surface, sizeof p.surface);
       else if (!strcmp(l, "octave")) p.octave = atoi(v);
-      else if (!strcmp(l, "root")) p.root = (float)atof(v);
-      else if (!strcmp(l, "bpm")) p.bpm = (float)atof(v);
+      else if (!strcmp(l, "root")) p.root = num(p.root);
+      else if (!strcmp(l, "bpm")) p.bpm = num(p.bpm);
       else if (!strcmp(l, "echo")) copy(p.echo, sizeof p.echo);
-      else if (!strcmp(l, "echo_fb")) p.echoFeedback = (float)atof(v);
-      else if (!strcmp(l, "echo_mix")) p.echoMix = (float)atof(v);
+      else if (!strcmp(l, "echo_fb")) p.echoFeedback = num(p.echoFeedback);
+      else if (!strcmp(l, "echo_mix")) p.echoMix = num(p.echoMix);
       else if (!strcmp(l, "tilt_side")) copy(p.tiltSide, sizeof p.tiltSide);
       else if (!strcmp(l, "tilt_front")) copy(p.tiltFront, sizeof p.tiltFront);
-      else if (!strcmp(l, "fx_space")) p.fxAmount[3] = (float)atof(v);
-      else for (int i = 0; i < 3; ++i)
-        if (!strcmp(l, kFxKeys[i])) {   // "<TYPE> <amount>"
+      else if (!strcmp(l, "fx_space")) p.fxAmount[3] = num(p.fxAmount[3]);
+      else {
+        for (int i = 0; i < 3; ++i) {
+          if (strcmp(l, kFxKeys[i])) continue;   // "<TYPE> <amount>"
           char t[8] = {};
-          float a = 0.0f;
-          if (sscanf(v, "%7s %f", t, &a) >= 1) { memcpy(p.fxType[i], t, sizeof t); p.fxAmount[i] = a; }
+          float a = p.fxAmount[i];
+          if (sscanf(v, "%7s %f", t, &a) >= 1) {
+            memcpy(p.fxType[i], t, sizeof t);
+            if (isFinite(a)) p.fxAmount[i] = a;
+          }
         }
-      else for (int i = 0; i < 4; ++i) if (!strcmp(l, kParamKeys[i])) p.params[i] = (float)atof(v);
+        for (int i = 0; i < 4; ++i)
+          if (!strcmp(l, kParamKeys[i])) p.params[i] = num(p.params[i]);
+      }
     }
     line += len + (end ? 1 : 0);
   }

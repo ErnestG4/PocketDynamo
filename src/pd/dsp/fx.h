@@ -50,6 +50,15 @@ class MasterFx {
     dirty_ = true;
   }
 
+  // Clears the running state (filter, hold, limiter), keeping the settings:
+  // the instrument's NaN guard calls it.
+  void reset() {
+    ic1_ = ic2_ = 0.0f;
+    held_ = 0.0f;
+    holdCount_ = 0;
+    env_ = 0.0f;
+  }
+
   PD_HOT __attribute__((noinline)) void process(float* io, size_t n) {
     if (dirty_) glide();
     const bool engaged = amount_[Shape] > 0.0f || amount_[Grit] > 0.0f || amount_[Tone] > 0.0f;

@@ -43,6 +43,12 @@ int main() {
                  "fx round-trip");
   check(c.fxAmount[0] == 0.0f && c.fxAmount[3] == 0.0f, "older patches load with the FX off");
   check(!fromText("hello", &c), "not a patch");
+  Patch junk;
+  check(fromText("pocketdynamo patch 1\nbpm=nan\nroot=inf\nmacro=-nan\necho_mix=1e99\nfx_tone=LP nan\nmorph=0.25\n", &junk), "a patch with junk numbers loads");
+  const Patch def;
+  check(junk.bpm == def.bpm && junk.root == def.root && junk.params[3] == def.params[3] && junk.echoMix == def.echoMix &&
+        junk.fxAmount[0] == def.fxAmount[0], "non-finite numbers keep their defaults");
+  check(!strcmp(junk.fxType[0], "LP") && std::fabs(junk.params[2] - 0.25f) < 1e-6f, "the good values on those lines still load");
 
   uint8_t h[kWavHeader];
   wavHeader(h, 24000, 1000);

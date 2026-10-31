@@ -7,6 +7,8 @@
 #include <M5Cardputer.h>
 #include <driver/i2s.h>
 
+#include <atomic>
+
 namespace pd {
 namespace audio {
 namespace {
@@ -38,12 +40,23 @@ const uint8_t kCodecInit[][2] = {
 };
 
 RenderFn g_render = nullptr;
+TaskHandle_t g_task = nullptr;
 
-volatile uint32_t g_blocks = 0, g_cyclesSum = 0, g_cyclesPeak = 0, g_windowBlocks = 0;
-volatile uint32_t g_late = 0, g_rxShort = 0, g_underruns = 0;
+// Counters that only grow: the audio task is their one writer, and an
+// aligned 32-bit read from the other core is whole.
+volatile uint32_t g_blocks = 0, g_late = 0, g_rxShort = 0, g_underruns = 0;
 QueueHandle_t g_i2sEvents = nullptr;   // the driver's DMA events: underruns show up here
-volatile float g_slotSq[2] = {0.0f, 0.0f};
-volatile uint32_t g_slotN = 0;
+
+// The report window (load, peak, mic level) belongs to the audio task alone.
+// takeStats() asks for it (g_req); the audio task hands over a copy and starts
+// a new window at a block boundary (g_ack), so no block's cycles or peak are
+// ever lost to the other core resetting them mid-update.
+struct Window {
+  uint32_t cyclesSum = 0, cyclesPeak = 0, blocks = 0, slotN = 0;
+  float slotSq[2] = {0.0f, 0.0f};
+};
+Window g_win, g_snap;
+std::atomic<uint32_t> g_req{0}, g_ack{0};
 
 constexpr uint32_t kCyclesPerBlock =
     (uint32_t)((uint64_t)240000000ULL * kBlock / kSampleRate);
@@ -63,7 +76,7 @@ void audioTask(void*) {
       sq0 += a * a; sq1 += b * b;
       in[i] = a;
     }
-    g_slotSq[0] += sq0; g_slotSq[1] += sq1; g_slotN += kBlock;
+    g_win.slotSq[0] += sq0; g_win.slotSq[1] += sq1; g_win.slotN += kBlock;
     g_render(in, out, kBlock);
     for (size_t i = 0; i < kBlock; ++i) {
       float s = out[i];
@@ -73,10 +86,16 @@ void audioTask(void*) {
       tx[2 * i + 1] = v;
     }
     const uint32_t dc = ESP.getCycleCount() - c0;
-    g_cyclesSum += dc;
-    if (dc > g_cyclesPeak) g_cyclesPeak = dc;
-    ++g_windowBlocks;
+    g_win.cyclesSum += dc;
+    if (dc > g_win.cyclesPeak) g_win.cyclesPeak = dc;
+    ++g_win.blocks;
     ++g_blocks;
+    const uint32_t req = g_req.load(std::memory_order_acquire);
+    if (req != g_ack.load(std::memory_order_relaxed)) {
+      g_snap = g_win;
+      g_win = Window{};
+      g_ack.store(req, std::memory_order_release);
+    }
     size_t put = 0;
     i2s_write(kPort, tx, sizeof(tx), &put, 0);
     if (put != sizeof(tx)) {
@@ -119,26 +138,32 @@ bool begin(RenderFn fn) {
   if (i2s_set_pin(kPort, &pins) != ESP_OK) return false;
   i2s_zero_dma_buffer(kPort);
   return xTaskCreatePinnedToCore(audioTask, "pd_audio", 4096, nullptr,
-                                 configMAX_PRIORITIES - 1, nullptr, 1) == pdPASS;
+                                 configMAX_PRIORITIES - 1, &g_task, 1) == pdPASS;
 }
+
+uint32_t stackFreeMin() { return g_task ? (uint32_t)uxTaskGetStackHighWaterMark(g_task) : 0; }
 
 bool setDacVolume(uint8_t reg) {
   return M5.In_I2C.writeRegister8(kCodecAddr, 0x32, reg, 400000);
 }
 
 Stats takeStats() {
+  // Ask for the window and wait for the next block to hand it over (a block
+  // is 0.67 ms; give up after 20 ms, e.g. if audio never started).
+  const uint32_t req = g_req.fetch_add(1, std::memory_order_acq_rel) + 1;
+  Window w;
+  for (int i = 0; i < 20 && g_ack.load(std::memory_order_acquire) != req; ++i) vTaskDelay(1);
+  if (g_ack.load(std::memory_order_acquire) == req) w = g_snap;
   Stats s;
-  const uint32_t n = g_windowBlocks ? g_windowBlocks : 1;
+  const uint32_t n = w.blocks ? w.blocks : 1;
   s.blocks = g_blocks;
-  s.loadAvgPermil = (uint32_t)((uint64_t)g_cyclesSum * 1000 / ((uint64_t)n * kCyclesPerBlock));
-  s.loadPeakPermil = (uint32_t)((uint64_t)g_cyclesPeak * 1000 / kCyclesPerBlock);
+  s.loadAvgPermil = (uint32_t)((uint64_t)w.cyclesSum * 1000 / ((uint64_t)n * kCyclesPerBlock));
+  s.loadPeakPermil = (uint32_t)((uint64_t)w.cyclesPeak * 1000 / kCyclesPerBlock);
   s.lateWrites = g_late;
   s.underruns = g_underruns;
   s.rxShort = g_rxShort;
-  const uint32_t sn = g_slotN ? g_slotN : 1;
-  s.slotRms[0] = sqrtf(g_slotSq[0] / sn); s.slotRms[1] = sqrtf(g_slotSq[1] / sn);
-  g_slotSq[0] = 0.0f; g_slotSq[1] = 0.0f; g_slotN = 0;
-  g_cyclesSum = 0; g_cyclesPeak = 0; g_windowBlocks = 0;
+  const uint32_t sn = w.slotN ? w.slotN : 1;
+  s.slotRms[0] = sqrtf(w.slotSq[0] / sn); s.slotRms[1] = sqrtf(w.slotSq[1] / sn);
   return s;
 }
 

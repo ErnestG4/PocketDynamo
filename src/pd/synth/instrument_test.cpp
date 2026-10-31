@@ -104,5 +104,50 @@ int main() {
 
     printf("%s ok (held-note peak %.3f)\n", engineName((EngineId)eng), on);
   }
+
+  // The NaN guards. Every engine stays finite through a NaN pitch and NaN
+  // controls (runPeak asserts every sample is finite; an engine either goes
+  // quiet or its voice is caught and rebuilt), and a normal note after it plays.
+  for (int eng = 0; eng < (int)EngineId::Count; ++eng) {
+    static TapeEcho echo;
+    static MasterFx fx;
+    Synth s;
+    s.setEcho(&echo);
+    s.setFx(&fx);
+    echo.setTime(0.1f); echo.setFeedback(0.6f); echo.setMix(0.5f);
+    fx.set(MasterFx::Tone, 0, 0.6f);
+    s.handle({EventType::Engine, (uint8_t)eng, 0, 0.0f});
+    s.handle({EventType::NoteOn, 1, 100, std::nanf("")});
+    runPeak(s, 50);
+    for (int k = 0; k < (int)Param::Count; ++k) s.handle({EventType::Param, (uint8_t)k, 0, std::nanf("")});
+    s.handle({EventType::NoteOn, 2, 100, 60.0f});
+    runPeak(s, 50);
+    for (int k = 0; k < (int)Param::Count; ++k) s.handle({EventType::Param, (uint8_t)k, 0, 0.5f});
+    s.handle({EventType::AllOff, 0, 0, 0.0f});
+    runPeak(s, 400);
+    s.handle({EventType::NoteOn, 3, 100, 64.0f});
+    check(runPeak(s, 200) > 0.05f, "a note after the NaNs plays");
+    printf("%s: finite through NaNs (%u caught)\n", engineName((EngineId)eng), (unsigned)s.faults());
+  }
+  // The bus guard: poison the filter's state, and the next block is caught,
+  // silenced, and the effects start clean.
+  {
+    static TapeEcho echo;
+    static MasterFx fx;
+    Synth s;
+    s.setEcho(&echo);
+    s.setFx(&fx);
+    fx.set(MasterFx::Tone, 0, 0.6f);
+    s.handle({EventType::NoteOn, 1, 100, 60.0f});
+    runPeak(s, 20);
+    float bad[kBlock];
+    for (auto& x : bad) x = std::nanf("");
+    fx.process(bad, kBlock);   // the filter's integrators are NaN now
+    const uint32_t before = s.faults();
+    runPeak(s, 1);
+    check(s.faults() == before + 1, "the bus guard catches it");
+    check(runPeak(s, 100) > 0.05f, "and the note plays on through clean effects");
+    printf("bus guard ok\n");
+  }
   return 0;
 }

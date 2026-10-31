@@ -1237,7 +1237,8 @@ void cpuBench() {
 void printState(const pd::audio::Stats& s) {
   Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(%s=%.2f,%s=%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu xrun=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
-                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f fx=%s:%.2f,%s:%.2f,%s:%.2f,SPACE:%.2f page=%s heap=%lu/%lu up=%lu\n",
+                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f fx=%s:%.2f,%s:%.2f,%s:%.2f,SPACE:%.2f page=%s heap=%lu/%lu "
+                "stack=%lu/%lu faults=%lu up=%lu\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
                 g_ui.sustain, g_ui.tilt, kDestNames[g_ui.tiltDest[0]], g_ui.tiltAxis[0],
                 kDestNames[g_ui.tiltDest[1]], g_ui.tiltAxis[1], g_synth.activeVoices(),
@@ -1249,7 +1250,9 @@ void printState(const pd::audio::Stats& s) {
                 pd::sampleStore().slices(), g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "off", g_ui.echoFb,
                 pd::MasterFx::name(0, g_ui.fxType[0]), fxNow(0), pd::MasterFx::name(1, g_ui.fxType[1]), fxNow(1),
                 pd::MasterFx::name(2, g_ui.fxType[2]), fxNow(2), fxNow(3), g_ui.fxPage ? "FX" : "SOUND",
-                (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(), (unsigned long)(millis() / 1000));
+                (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(),
+                (unsigned long)pd::audio::stackFreeMin(), (unsigned long)uxTaskGetStackHighWaterMark(nullptr),
+                (unsigned long)g_synth.faults(), (unsigned long)(millis() / 1000));
 }
 
 int hexDigit(int ch) {

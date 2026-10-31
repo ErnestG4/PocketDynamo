@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 // PD_HOT puts a render path in IRAM on the device. Both cores share one
 // 16 KB flash instruction cache, and core 0's display, USB and BLE code keeps
@@ -32,6 +33,14 @@ constexpr float kSampleRate = PD_SAMPLE_RATE;
 
 template <typename T>
 inline T clamp(T x, T lo, T hi) { return std::min(std::max(x, lo), hi); }
+
+// True unless x is NaN or infinite. Tested on the bits, so no compiler flag
+// can optimise it away. (clamp() passes NaN straight through.)
+inline bool isFinite(float x) {
+  uint32_t u;
+  std::memcpy(&u, &x, sizeof u);
+  return (u & 0x7F800000u) != 0x7F800000u;
+}
 
 inline float semitonesToRatio(float st) { return std::exp2(st * (1.0f / 12.0f)); }
 

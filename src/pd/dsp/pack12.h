@@ -34,7 +34,7 @@ struct Pack12 {
   void put(uint32_t i, int v) {
     int r = (v + 8) >> 4;
     r = r > 2047 ? 2047 : (r < -2048 ? -2048 : r);
-    const uint16_t u = (uint16_t)(r << 4);
+    const uint16_t u = (uint16_t)((unsigned)r << 4);   // unsigned: shifting a negative int is undefined
     uint8_t* p = bytes + (i >> 1) * 3;
     if (i & 1) { p[1] = (uint8_t)((p[1] & 0x0F) | (u & 0xF0)); p[2] = (uint8_t)(u >> 8); }
     else       { p[0] = (uint8_t)(u >> 4); p[1] = (uint8_t)((p[1] & 0xF0) | (u >> 12)); }
