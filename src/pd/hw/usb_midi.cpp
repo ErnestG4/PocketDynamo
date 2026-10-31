@@ -20,7 +20,7 @@ bool g_descriptorLoaded = false;
 // USB task -> control task: packets with their arrival time.
 struct Stamped { uint8_t p[4]; uint32_t at; };
 constexpr uint32_t kRing = 64;
-Stamped g_ring[kRing];
+RTC_DATA_ATTR Stamped g_ring[kRing];   // the slots in RTC slow memory; the indices stay in SRAM
 std::atomic<uint32_t> g_head{0}, g_tail{0};
 
 // The MIDI interface pair (audio control + streaming) and its endpoints,

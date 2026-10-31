@@ -140,8 +140,9 @@ The take is stored at 24 kHz and 12 bits, for a bit of vintage-sampler grit.
 
 A tape echo on everything you play, synced to the tempo.
 
-- **FN+`e`** steps the time: 1/8 → dotted 1/8 → 1/4 → off. The tape is 0.6 s
-  long, so at slow tempos a time that won't fit halves until it does.
+- **FN+`e`** steps the time: 1/8 → dotted 1/8 → 1/4 → off. The tape is 1.5 s
+  long, so a 1/4 fits down to 40 bpm; below that, a time that won't fit
+  halves until it does.
 - **FN+`d`/`f`:** feedback, which is how long the repeats go on.
 - **FN+`s`/`g`:** mix, which is how loud they are.
 

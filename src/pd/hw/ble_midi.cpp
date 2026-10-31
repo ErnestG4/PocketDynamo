@@ -17,7 +17,7 @@ constexpr const char* kName = "PocketDynamo";
 
 // NimBLE host task (core 0) -> control task: packets with their arrival.
 constexpr uint32_t kRing = 16;
-pd::blemidi::Packet g_ring[kRing];
+RTC_DATA_ATTR pd::blemidi::Packet g_ring[kRing];   // the slots in RTC slow memory; the indices stay in SRAM
 std::atomic<uint32_t> g_head{0}, g_tail{0};
 std::atomic<bool> g_connected{false};
 

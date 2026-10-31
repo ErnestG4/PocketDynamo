@@ -208,7 +208,12 @@ struct Ui {
   uint32_t msgUntil = 0;
   bool  dirty = true;
 };
-Ui g_ui;
+// In RTC slow memory, with the MIDI rings' slots (hw/usb_midi, hw/ble_midi):
+// 8 KB that nothing else uses. It's slower than internal SRAM, so it only
+// holds what the control side touches at its own pace, never the audio's
+// buffers or anything atomic. The bootloader reloads it on every reset that
+// isn't a deep-sleep wake, so it starts like any other global.
+RTC_DATA_ATTR Ui g_ui;
 
 const pd::surface::Surface& surf() { return pd::surface::kSurfaces[g_ui.surface]; }
 
@@ -1017,28 +1022,38 @@ void onKey(int r, int c, bool pressed) {
 
 // --- display ---
 
-// Drawn off-screen and pushed whole: no flicker from the full redraw.
+// Drawn off-screen and pushed whole: no flicker from the full redraw. The
+// canvas is 4-bit with a palette (16 KB, half of 8-bit RGB332): the screen
+// only uses these colours, and the drawing calls take their indices.
 M5Canvas g_canvas(&M5Cardputer.Display);
+enum : uint8_t { kPalBlack, kPalOrange, kPalWhite, kPalLightGrey, kPalDarkGrey, kPalCyan, kPalGreen, kPalRed, kPalYellow };
+void makePalette() {
+  static const uint8_t kRgb[][3] = {   // the TFT_ colours, from their RGB565 values
+      {0, 0, 0}, {255, 182, 0}, {255, 255, 255}, {214, 210, 214}, {123, 125, 123},
+      {0, 255, 255}, {0, 255, 0}, {255, 0, 0}, {255, 255, 0}};
+  g_canvas.createPalette();
+  for (size_t i = 0; i < sizeof kRgb / sizeof kRgb[0]; ++i) g_canvas.setPaletteColor(i, kRgb[i][0], kRgb[i][1], kRgb[i][2]);
+}
 
 // FX bars: cyan (the FX page's colour) or green while tilted.
 void drawFxBar(int y, int bar) {
   auto& d = g_canvas;
-  d.setTextColor(TFT_CYAN, TFT_BLACK);
+  d.setTextColor(kPalCyan, kPalBlack);
   d.setCursor(4, y + 2);
   d.print(fxBarLabel(bar));
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.drawRect(64, y, 172, 12, TFT_DARKGREY);
-  d.fillRect(65, y + 1, 170, 10, TFT_BLACK);
-  d.fillRect(65, y + 1, (int)(170 * fxNow(bar)), 10, tiltAxisFor(kDestFx0 + bar) >= 0 ? TFT_GREEN : TFT_CYAN);
+  d.setTextColor(kPalLightGrey, kPalBlack);
+  d.drawRect(64, y, 172, 12, kPalDarkGrey);
+  d.fillRect(65, y + 1, 170, 10, kPalBlack);
+  d.fillRect(65, y + 1, (int)(170 * fxNow(bar)), 10, tiltAxisFor(kDestFx0 + bar) >= 0 ? kPalGreen : kPalCyan);
 }
 
 void drawBar(int y, const char* name, int p) {
   auto& d = g_canvas;
   d.setCursor(4, y + 2);
   d.print(name);
-  d.drawRect(64, y, 172, 12, TFT_DARKGREY);
-  d.fillRect(65, y + 1, 170, 10, TFT_BLACK);
-  d.fillRect(65, y + 1, (int)(170 * effective(p)), 10, tilted(p) ? TFT_GREEN : TFT_ORANGE);
+  d.drawRect(64, y, 172, 12, kPalDarkGrey);
+  d.fillRect(65, y + 1, 170, 10, kPalBlack);
+  d.fillRect(65, y + 1, (int)(170 * effective(p)), 10, tilted(p) ? kPalGreen : kPalOrange);
 }
 
 void rootLabel(char* buf, size_t n) {
@@ -1084,57 +1099,57 @@ void printNotice(bool full) {
 
 void draw(const pd::audio::Stats& s) {
   auto& d = g_canvas;
-  d.fillScreen(TFT_BLACK);
+  d.fillScreen(kPalBlack);
   d.setTextSize(2);
-  d.setTextColor(TFT_ORANGE, TFT_BLACK);
+  d.setTextColor(kPalOrange, kPalBlack);
   d.setCursor(4, 2);
   d.print(pd::engineName((pd::EngineId)g_ui.engine));
   d.setTextSize(1);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
+  d.setTextColor(kPalWhite, kPalBlack);
   d.setCursor(124, 2);
   d.print(surf().name);
   char root[16];
   rootLabel(root, sizeof root);
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  d.setTextColor(kPalLightGrey, kPalBlack);
   d.setCursor(124, 12);
   d.printf("%s %3.0fbpm %+ddB", root, g_ui.bpm, (g_ui.dacVol - 0xBF) / 2);
   d.setCursor(4, 24);
-  d.setTextColor(g_ui.strip == Strip::Notes ? TFT_DARKGREY : TFT_CYAN, TFT_BLACK);
+  d.setTextColor(g_ui.strip == Strip::Notes ? kPalDarkGrey : kPalCyan, kPalBlack);
   d.print(stripName(g_ui.strip));
-  d.setTextColor(g_ui.sustain ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  d.setTextColor(g_ui.sustain ? kPalGreen : kPalDarkGrey, kPalBlack);
   d.setCursor(64, 24);
   d.print("SUS");
-  d.setTextColor(g_ui.tilt ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  d.setTextColor(g_ui.tilt ? kPalGreen : kPalDarkGrey, kPalBlack);
   d.setCursor(88, 24);
   d.print("TILT");
   if (pd::usbmidi::available() || pd::blemidi::connected()) {
-    d.setTextColor(millis() - g_ui.midiSeen < 250 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+    d.setTextColor(millis() - g_ui.midiSeen < 250 ? kPalGreen : kPalDarkGrey, kPalBlack);
     d.setCursor(170, 2);
     d.print("MIDI");
   }
   if (g_bleOk) {   // BT: dim while advertising, lit while a host is connected
-    d.setTextColor(pd::blemidi::connected() ? TFT_CYAN : TFT_DARKGREY, TFT_BLACK);
+    d.setTextColor(pd::blemidi::connected() ? kPalCyan : kPalDarkGrey, kPalBlack);
     d.setCursor(200, 2);
     d.print("BT");
   }
   d.setCursor(122, 24);
   const auto& take = pd::sampleStore();
   if (g_ui.recKey >= 0) {
-    d.setTextColor(TFT_RED, TFT_BLACK);
+    d.setTextColor(kPalRed, kPalBlack);
     d.printf("REC %.1fs", (millis() - g_ui.recStart) * 1e-3f);
   } else if (take.ready()) {
-    d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    d.setTextColor(kPalDarkGrey, kPalBlack);
     d.printf("%.1fs/%d", (float)take.length() / pd::SampleStore::kRate, take.slices());
   }
   d.setCursor(170, 24);
   // Cyan while tilt drives the echo, green while it's on, grey off.
   const bool echoTilted = tiltAxisFor(kDestEchoFb) >= 0 || tiltAxisFor(kDestEchoMix) >= 0;
-  d.setTextColor(echoTilted ? TFT_CYAN : g_ui.echoDiv >= 0 ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  d.setTextColor(echoTilted ? kPalCyan : g_ui.echoDiv >= 0 ? kPalGreen : kPalDarkGrey, kPalBlack);
   d.printf("E%s", g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "--");
-  d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  d.setTextColor(kPalDarkGrey, kPalBlack);
   d.setCursor(206, 24);
   d.printf("%lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  d.setTextColor(kPalLightGrey, kPalBlack);
   if (g_ui.fxPage) {
     for (int b = 0; b < kFxBars; ++b) drawFxBar(36 + 16 * b, b);
   } else {
@@ -1151,28 +1166,28 @@ void draw(const pd::audio::Stats& s) {
                                                        : pd::arp::kSlots[i].label;
       const int x = 6 + 19 * i;
       const bool held = i == g_ui.slot;
-      d.fillRect(x, 102, 18, 14, held ? (g_ui.latched ? TFT_GREEN : TFT_CYAN) : TFT_BLACK);
-      d.drawRect(x, 102, 18, 14, TFT_DARKGREY);
-      d.setTextColor(held ? TFT_BLACK : TFT_CYAN, held ? (g_ui.latched ? TFT_GREEN : TFT_CYAN) : TFT_BLACK);
+      d.fillRect(x, 102, 18, 14, held ? (g_ui.latched ? kPalGreen : kPalCyan) : kPalBlack);
+      d.drawRect(x, 102, 18, 14, kPalDarkGrey);
+      d.setTextColor(held ? kPalBlack : kPalCyan, held ? (g_ui.latched ? kPalGreen : kPalCyan) : kPalBlack);
       d.setCursor(x + 9 - 3 * (int)strlen(label), 106);
       d.print(label);
     }
   }
   d.setCursor(4, 124);
   if (g_ui.msg && (int32_t)(millis() - g_ui.msgUntil) < 0) {
-    d.setTextColor(TFT_YELLOW, TFT_BLACK);
+    d.setTextColor(kPalYellow, kPalBlack);
     d.print(g_ui.msg);
   } else if (g_looper.state() != pd::Looper::Empty) {
     const uint32_t now = micros();
     const auto st = g_looper.state();
-    d.setTextColor(st == pd::Looper::Recording || st == pd::Looper::Overdub ? TFT_RED : TFT_GREEN, TFT_BLACK);
+    d.setTextColor(st == pd::Looper::Recording || st == pd::Looper::Overdub ? kPalRed : kPalGreen, kPalBlack);
     if (st == pd::Looper::Recording) d.printf("LOOP REC %.1fs", g_looper.elapsed(now) * 1e-6f);
     else d.printf("LOOP %s %.1fs  %d ev", st == pd::Looper::Overdub ? "OVERDUB" : st == pd::Looper::Stopped ? "STOPPED" : "PLAY",
                   g_looper.lapUs() * 1e-6f, g_looper.events());
     if (st == pd::Looper::Playing || st == pd::Looper::Overdub)
-      d.fillRect(4, 133, (int)(232 * g_looper.position(now)), 2, TFT_GREEN);
+      d.fillRect(4, 133, (int)(232 * g_looper.position(now)), 2, kPalGreen);
   } else {
-    d.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    d.setTextColor(kPalDarkGrey, kPalBlack);
     d.print("`dice TAB surf BS strip \\eng CTRL tilt SPC sus");
   }
   d.pushSprite(0, 0);
@@ -1311,8 +1326,9 @@ void setup() {
   cfg.internal_mic = false;
   M5Cardputer.begin(cfg, false);   // our own TCA8418 driver, not M5's keyboard
   drawNotice();
-  g_canvas.setColorDepth(8);   // RGB332: half the RAM of 16-bit, plenty for flat colours and text
+  g_canvas.setColorDepth(4);
   const bool canvasOk = g_canvas.createSprite(240, 135) != nullptr;
+  if (canvasOk) makePalette();
   const bool keysOk = pd::keys::begin();
   pd::sineTable();   // build the shared table now, not inside the first FM note's block
   g_synth.setEcho(&g_echo);   // before audio starts: the render task reads them
