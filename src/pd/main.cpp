@@ -97,13 +97,14 @@ void render(const float* in, float* out, size_t n) {
   // chord's setup cost (MODAL's strike state, FM's coefficients) then never
   // lands on one block all at once. A MODAL strike builds a resonator bank
   // and counts double: four of them on top of eight ringing voices was the
-  // one dropout in a 20-minute soak.
+  // one dropout in a 20-minute soak. A voice that builds a new engine (the
+  // first notes after an engine change) counts one more: its first block
+  // runs cold, and eight of them at once peaked at 110% of the block.
   constexpr int kStrikesPerBlock = 4;
   int strikes = 0;
   pd::Event e;
   while (strikes < kStrikesPerBlock && g_events.pop(&e)) {
-    g_synth.handle(e);
-    if (e.type == pd::EventType::NoteOn) strikes += g_synth.engine() == pd::EngineId::Modal ? 2 : 1;
+    strikes += g_synth.handle(e);
   }
   g_synth.render(out);
 }

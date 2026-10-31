@@ -78,9 +78,11 @@ class Instrument {
     params_[(int)Param::Timbre] = 0.75f;     // ~15-sample pins: one key has body
   }
 
-  void handle(const Event& e) {
+  // Handles one event and returns what it costs the render as strikes (0 for
+  // anything but a NoteOn): the render task budgets them per block.
+  int handle(const Event& e) {
     switch (e.type) {
-      case EventType::NoteOn:    noteOn(e.a, e.b, e.value); break;
+      case EventType::NoteOn:    return noteOn(e.a, e.b, e.value);
       case EventType::NoteOff:   noteOff(e.a); break;
       case EventType::Retrigger: retrigger(e.a, e.value); break;
       case EventType::Pitch:
@@ -113,6 +115,7 @@ class Instrument {
         for (auto& v : voices_) { v.gated = false; v.env.gateOff(); }
         break;
     }
+    return 0;
   }
 
   // Render one block of mono output.
@@ -197,7 +200,9 @@ class Instrument {
     }
   };
 
-  void noteOn(uint8_t tag, uint8_t vel, float note) {
+  // A strike costs 1; a MODAL strike builds a resonator bank (+1), and a
+  // voice that has to build a new engine pays its cold first block (+1).
+  int noteOn(uint8_t tag, uint8_t vel, float note) {
     Voice* v = nullptr;
     for (auto& c : voices_) if (!c.env.active()) { v = &c; break; }   // free
     if (!v) for (auto& c : voices_)                                    // oldest released
@@ -208,13 +213,15 @@ class Instrument {
     v->gated = true;
     v->trigger = true;
     if (v->engine != engine_ || !v->env.active()) v->env.setTimes(2.0f, releaseMs(engine_), kBlock);
-    if (v->engine != engine_) v->build(engine_);
+    const bool rebuilt = v->engine != engine_;
+    if (rebuilt) v->build(engine_);
     // A modal bank left ringing when its voice went idle would come back as
     // a faint tail on the voice's next note: start it clean.
     else if (engine_ == EngineId::Modal && !v->env.active()) v->eng->reset();
     v->gain = 0.35f + 0.65f * (float)vel / 127.0f;
     v->age = ++clock_;
     v->env.gateOn();
+    return 1 + (engine_ == EngineId::Modal) + rebuilt;
   }
 
   void noteOff(uint8_t tag) {
