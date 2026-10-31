@@ -53,4 +53,7 @@ its own notice and goes in NOTICE.md.
 - MIDI: `midi/` is the shared, transport-free part (parser, USB packets,
   clock tempo, the mapping); `hw/usb_midi` is only the wire. A new transport
   (BLE) should hand bytes to `midi::Parser`, nothing more.
+- Device scripts: `tools/bench.py` (the `B` bench, several runs side by side)
+  and `tools/soak.py <hours> <log>` (random play over serial, with hung-note
+  drain checks and periodic benches). Both keep the volume at the floor.
 - Player docs: `docs/pocketdynamo.md`. Credits: `NOTICE.md`.
