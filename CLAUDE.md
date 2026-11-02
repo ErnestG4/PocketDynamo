@@ -23,7 +23,10 @@ its own notice and goes in NOTICE.md.
 - `midi/`: MIDI in, shared by every transport.
 - `synth/`: the instrument (voice pool), events + SPSC queue, sample store,
   looper, dice.
-- `ui/`: keymap, playing surfaces, arp patterns, patch format, tilt mapping.
+- `ui/`: keymap, playing surfaces, arp patterns, patch format, tilt mapping,
+  and `controls.h`: the one table of every control (name, page bar, CCs, what
+  tilt and the LFO can drive) plus page-knob pickup. A new control is a row
+  there.
 - `main.cpp`: control task (core 0) and display.
 - `*_test.cpp`: g++ host tests, `g++ -std=c++17 -O2 -I src/pd <test> -o t && ./t`.
 

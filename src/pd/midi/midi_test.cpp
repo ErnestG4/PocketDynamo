@@ -21,18 +21,11 @@ struct Log {
   void noteOn(int n, int v) { got.push_back("on " + std::to_string(n) + " " + std::to_string(v)); }
   void noteOff(int n) { got.push_back("off " + std::to_string(n)); }
   void sustain(bool d) { got.push_back(d ? "sus 1" : "sus 0"); }
-  void param(int p, float v) { got.push_back("p" + std::to_string(p) + " " + std::to_string((int)std::lround(v * 100))); }
   void bend(float s) { got.push_back("bend " + std::to_string((int)std::lround(s * 100))); }
   void program(int n) { got.push_back("prog " + std::to_string(n)); }
   void allOff() { got.push_back("alloff"); }
-  void echoMix(float v) { got.push_back("echo " + std::to_string((int)std::lround(v * 100))); }
-  void fx(int b, float v) { got.push_back("fx" + std::to_string(b) + " " + std::to_string((int)std::lround(v * 100))); }
+  void cc(int n, float v) { got.push_back("cc" + std::to_string(n) + " " + std::to_string((int)std::lround(v * 100))); }
   void tempo(float bpm) { got.push_back("tempo " + std::to_string((int)std::lround(bpm))); }
-  void echoFeedback(float v) { got.push_back("efb " + std::to_string((int)std::lround(v * 100))); }
-  void echoTime(float v) { got.push_back("etime " + std::to_string((int)std::lround(v * 100))); }
-  void env(int b, float v) { got.push_back("env" + std::to_string(b) + " " + std::to_string((int)std::lround(v * 100))); }
-  void lfo(int b, float v) { got.push_back("lfo" + std::to_string(b) + " " + std::to_string((int)std::lround(v * 100))); }
-  void volume(float v) { got.push_back("vol " + std::to_string((int)std::lround(v * 100))); }
 };
 
 static std::vector<std::string> run(const std::vector<uint8_t>& bytes) {
@@ -49,15 +42,9 @@ int main() {
   check(g == want, "notes, running status, realtime and sysex interleaved");
 
   g = run({0xB0, 64, 127, 0xB0, 1, 127, 74, 0, 0xB2, 64, 10, 0xB0, 123, 0, 91, 127, 20, 127, 23, 0});
-  check((g == std::vector<std::string>{"sus 1", "lfo1 100", "p1 0", "sus 0", "alloff", "echo 100", "fx0 100", "fx3 0"}), "CCs");
+  check((g == std::vector<std::string>{"sus 1", "cc1 100", "cc74 0", "sus 0", "alloff", "cc91 100", "cc20 100", "cc23 0"}), "CCs");
 
-  // Every slider has a CC: ENV 24..27 and the GM2 times, LFO 28..31 and the
-  // vibrato controllers, volume, echo feedback and time, MORPH on 18.
-  g = run({0xB0, 24, 127, 27, 0, 73, 127, 75, 127, 72, 0, 28, 127, 31, 0, 76, 0, 77, 127, 78, 127,
-           7, 127, 12, 0, 13, 127, 18, 127});
-  check((g == std::vector<std::string>{"env0 100", "env3 0", "env0 100", "env1 100", "env3 0", "lfo0 100", "lfo3 0",
-                                        "lfo0 0", "lfo1 100", "lfo3 100", "vol 100", "efb 0", "etime 100", "p2 100"}),
-        "the CC map");
+  // (What each CC moves is ui/controls.h's, tested in ui/controls_test.cpp.)
 
   g = run({0xE0, 0, 0x40, 0xE0, 0x7F, 0x7F, 0xE0, 0, 0});
   check((g == std::vector<std::string>{"bend 0", "bend 200", "bend -200"}), "bend centre and ends");

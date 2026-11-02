@@ -309,6 +309,17 @@ What it responds to:
   | 91 | echo mix |
 
   The mod wheel used to drive MORPH. It's on CC 18 now.
+- **Page knobs:** four knobs can reach every bar. CC 102–105 move the four
+  bars of whichever page is on screen. CC 106 picks the page (its range in
+  four equal parts: SOUND, FX, ENV, LFO), and CC 107 at 64 or above steps to
+  the next page, for a button.
+  - **Pickup:** a page knob only takes over a bar once it reaches the bar's
+    value, by starting within a step of it or turning past it. So changing
+    page, or nudging the bar from the keyboard, never makes the first turn
+    jump. Until then the bottom line shows where the bar is, for example
+    `TIMBRE 75%: TURN TO IT`.
+  - This works with knobs that are encoders, as long as they send a value
+    (0–127) rather than up/down steps.
 - **Pitch bend** covers ±2 semitones.
 - **Program change** 0–6 picks the engine.
 - **MIDI clock** sets the tempo, so the arp, ratchets, BREAK, the echo and the
