@@ -47,7 +47,7 @@ bool mounted() { return g_mounted; }
 
 bool save(int slot, const patch::Patch& p, const SampleStore& take) {
   if (!g_mounted) return false;
-  char name[40], text[512];
+  char name[40], text[768];   // the longest patch is ~470 bytes
   path(name, sizeof name, slot, "txt");
   File f = SD.open(name, FILE_WRITE);
   if (!f) return false;
@@ -78,7 +78,7 @@ bool save(int slot, const patch::Patch& p, const SampleStore& take) {
 bool load(int slot, patch::Patch* p, SampleStore& take, bool* tookTake) {
   *tookTake = false;
   if (!g_mounted) return false;
-  char name[40], text[512];
+  char name[40], text[768];   // the longest patch is ~470 bytes
   path(name, sizeof name, slot, "txt");
   File f = SD.open(name, FILE_READ);
   if (!f) return false;

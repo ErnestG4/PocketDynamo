@@ -11,7 +11,7 @@
 
 namespace pd {
 
-enum class EventType : uint8_t { NoteOn, NoteOff, Retrigger, Pitch, Param, Engine, AllOff, Tempo, Bend, Echo, Fx };
+enum class EventType : uint8_t { NoteOn, NoteOff, Retrigger, Pitch, Param, Engine, AllOff, Tempo, Bend, Echo, Fx, Env, Lfo };
 
 enum class Param : uint8_t { Harmonics, Timbre, Morph, Macro, Count };
 
@@ -29,6 +29,11 @@ struct Event {
                     // Echo: a = 0 time (s, <= 0 off), 1 feedback, 2 mix.
                     // Fx: a = FX bar (0 TONE, 1 GRIT, 2 SHAPE, 3 SPACE),
                     // b = its effect type, value = amount.
+                    // Env (the optional ADSR): a = 0 attack ms, 1 decay ms,
+                    // 2 sustain 0..1, 3 release ms, 4 on (value > 0.5).
+                    // Lfo: a = 0 rate Hz, 1 depth 0..1, 2 shape (LfoShape),
+                    // 3 delay ms, 4 destination (b = LfoDest), 5 tempo sync
+                    // (value = beats per cycle, 0 = free-running at the rate).
 };
 
 template <int N>

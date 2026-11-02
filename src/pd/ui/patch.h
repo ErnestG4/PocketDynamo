@@ -31,7 +31,17 @@ struct Patch {
   char  tiltFront[12] = "MORPH";
   char  fxType[3][8] = {"LP", "CRUSH", "FOLD"};  // TONE, GRIT, SHAPE
   float fxAmount[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // TONE, GRIT, SHAPE, SPACE
+  // The ENV page's ADSR and the LFO page, as bar positions 0..1. A patch
+  // from before them reads as ENV off and the LFO routed nowhere.
+  bool  envOn = false;
+  float env[4] = {0.0f, 0.45f, 0.7f, 0.45f};       // attack decay sustain release
+  char  lfoDest[12] = "NONE";
+  float lfo[4] = {0.5f, 0.3f, 0.0f, 0.0f};         // rate depth shape delay
+  bool  lfoSync = false;
 };
+
+constexpr const char* kEnvKeys[4] = {"env_attack", "env_decay", "env_sustain", "env_release"};
+constexpr const char* kLfoKeys[4] = {"lfo_rate", "lfo_depth", "lfo_shape", "lfo_delay"};
 
 constexpr const char* kFxKeys[4] = {"fx_tone", "fx_grit", "fx_shape", "fx_space"};
 
@@ -44,12 +54,17 @@ inline int toText(const Patch& p, char* buf, size_t n) {
                   "engine=%s\nsurface=%s\noctave=%d\nroot=%.4f\nbpm=%.1f\n"
                   "%s=%.4f\n%s=%.4f\n%s=%.4f\n%s=%.4f\n"
                   "echo=%s\necho_fb=%.3f\necho_mix=%.3f\ntilt_side=%s\ntilt_front=%s\n"
-                  "fx_tone=%s %.3f\nfx_grit=%s %.3f\nfx_shape=%s %.3f\nfx_space=%.3f\n",
+                  "fx_tone=%s %.3f\nfx_grit=%s %.3f\nfx_shape=%s %.3f\nfx_space=%.3f\n"
+                  "env=%s\n%s=%.3f\n%s=%.3f\n%s=%.3f\n%s=%.3f\n"
+                  "lfo_dest=%s\n%s=%.3f\n%s=%.3f\n%s=%.3f\n%s=%.3f\nlfo_sync=%s\n",
                   p.engine, p.surface, p.octave, p.root, p.bpm,
                   kParamKeys[0], p.params[0], kParamKeys[1], p.params[1],
                   kParamKeys[2], p.params[2], kParamKeys[3], p.params[3],
                   p.echo, p.echoFeedback, p.echoMix, p.tiltSide, p.tiltFront,
-                  p.fxType[0], p.fxAmount[0], p.fxType[1], p.fxAmount[1], p.fxType[2], p.fxAmount[2], p.fxAmount[3]);
+                  p.fxType[0], p.fxAmount[0], p.fxType[1], p.fxAmount[1], p.fxType[2], p.fxAmount[2], p.fxAmount[3],
+                  p.envOn ? "on" : "off", kEnvKeys[0], p.env[0], kEnvKeys[1], p.env[1], kEnvKeys[2], p.env[2],
+                  kEnvKeys[3], p.env[3], p.lfoDest, kLfoKeys[0], p.lfo[0], kLfoKeys[1], p.lfo[1],
+                  kLfoKeys[2], p.lfo[2], kLfoKeys[3], p.lfo[3], p.lfoSync ? "on" : "off");
 }
 
 // Parses what toText wrote (or a hand edit of it). False if it isn't a patch.
@@ -84,6 +99,9 @@ inline bool fromText(const char* text, Patch* out) {
       else if (!strcmp(l, "tilt_side")) copy(p.tiltSide, sizeof p.tiltSide);
       else if (!strcmp(l, "tilt_front")) copy(p.tiltFront, sizeof p.tiltFront);
       else if (!strcmp(l, "fx_space")) p.fxAmount[3] = num(p.fxAmount[3]);
+      else if (!strcmp(l, "env")) p.envOn = !strcmp(v, "on");
+      else if (!strcmp(l, "lfo_dest")) copy(p.lfoDest, sizeof p.lfoDest);
+      else if (!strcmp(l, "lfo_sync")) p.lfoSync = !strcmp(v, "on");
       else {
         for (int i = 0; i < 3; ++i) {
           if (strcmp(l, kFxKeys[i])) continue;   // "<TYPE> <amount>"
@@ -94,8 +112,11 @@ inline bool fromText(const char* text, Patch* out) {
             if (isFinite(a)) p.fxAmount[i] = a;
           }
         }
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 4; ++i) {
           if (!strcmp(l, kParamKeys[i])) p.params[i] = num(p.params[i]);
+          if (!strcmp(l, kEnvKeys[i])) p.env[i] = num(p.env[i]);
+          if (!strcmp(l, kLfoKeys[i])) p.lfo[i] = num(p.lfo[i]);
+        }
       }
     }
     line += len + (end ? 1 : 0);

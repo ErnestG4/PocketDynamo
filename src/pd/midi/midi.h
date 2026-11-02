@@ -159,16 +159,32 @@ inline int ccParam(uint8_t cc) {
   switch (cc) {
     case 16: case 71: return 0;   // GP 1, resonance -> HARMONICS
     case 17: case 74: return 1;   // GP 2, brightness -> TIMBRE
-    case 18: case 1:  return 2;   // GP 3, mod wheel -> MORPH
+    case 18: return 2;            // GP 3 -> MORPH
     case 19: case 2:  return 3;   // GP 4, breath -> MACRO
     default: return -1;
   }
 }
 
+// CCs -> the ENV page's bars (0 ATTACK, 1 DECAY, 2 SUSTAIN, 3 RELEASE): 24..27
+// in order, and the General MIDI 2 sound controllers for the times.
+inline int ccEnv(uint8_t cc) {
+  if (cc >= 24 && cc <= 27) return cc - 24;
+  return cc == 73 ? 0 : cc == 75 ? 1 : cc == 72 ? 3 : -1;
+}
+
+// CCs -> the LFO page's bars (0 RATE, 1 DEPTH, 2 SHAPE, 3 DELAY): 28..31 in
+// order, the GM2 vibrato controllers, and the mod wheel for depth.
+inline int ccLfo(uint8_t cc) {
+  if (cc >= 28 && cc <= 31) return cc - 28;
+  return cc == 76 ? 0 : cc == 77 || cc == 1 ? 1 : cc == 78 ? 3 : -1;
+}
+
 constexpr float kBendRange = 2.0f;   // semitones each way
 
 // Handler: noteOn(note, vel), noteOff(note), sustain(bool), param(p, 0..1),
-// echoMix(0..1), fx(bar, 0..1), bend(semitones), program(n), allOff(), tempo(bpm).
+// echoMix(0..1), echoFeedback(0..1), echoTime(0..1), fx(bar, 0..1),
+// env(bar, 0..1), lfo(bar, 0..1), volume(0..1), bend(semitones), program(n),
+// allOff(), tempo(bpm).
 class In {
  public:
   template <typename H>
@@ -179,8 +195,13 @@ class In {
       case 0xB0:
         if (m.d1 == 64) h.sustain(m.d2 >= 64);
         else if (m.d1 == 120 || m.d1 == 123) h.allOff();
+        else if (m.d1 == 7) h.volume((float)m.d2 * (1.0f / 127.0f));
         else if (m.d1 == 91) h.echoMix((float)m.d2 * (1.0f / 127.0f));   // the usual effects-send CC
+        else if (m.d1 == 12) h.echoFeedback((float)m.d2 * (1.0f / 127.0f));   // effect controls 1 and 2
+        else if (m.d1 == 13) h.echoTime((float)m.d2 * (1.0f / 127.0f));
         else if (m.d1 >= 20 && m.d1 <= 23) h.fx(m.d1 - 20, (float)m.d2 * (1.0f / 127.0f));   // FX bars
+        else if (ccEnv(m.d1) >= 0) h.env(ccEnv(m.d1), (float)m.d2 * (1.0f / 127.0f));
+        else if (ccLfo(m.d1) >= 0) h.lfo(ccLfo(m.d1), (float)m.d2 * (1.0f / 127.0f));
         else if (ccParam(m.d1) >= 0) h.param(ccParam(m.d1), (float)m.d2 * (1.0f / 127.0f));
         break;
       case 0xE0: {

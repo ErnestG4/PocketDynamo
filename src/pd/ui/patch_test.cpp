@@ -18,7 +18,7 @@ int main() {
   strcpy(a.engine, "CLOUD"); strcpy(a.surface, "49 7x7");
   a.octave = 5; a.root = 0.2449f; a.bpm = 133.0f;
   a.params[0] = 0.1f; a.params[1] = 0.2f; a.params[2] = 0.3f; a.params[3] = 0.9f;
-  char text[512];
+  char text[768];
   check(toText(a, text, sizeof text) > 0, "writes");
   Patch b;
   check(fromText(text, &b), "reads back");
@@ -30,7 +30,7 @@ int main() {
   check(!strcmp(c.echo, "OFF"), "a patch from before the echo loads with it off");
   Patch d; snprintf(d.echo, sizeof d.echo, "1/8."); d.echoFeedback = 0.6f; d.echoMix = 0.2f;
   snprintf(d.tiltSide, sizeof d.tiltSide, "ECHO MIX"); snprintf(d.tiltFront, sizeof d.tiltFront, "HARMONICS");
-  char t[512]; toText(d, t, sizeof t);
+  char t[768]; toText(d, t, sizeof t);
   Patch e; check(fromText(t, &e) && !strcmp(e.echo, "1/8.") && std::fabs(e.echoFeedback - 0.6f) < 1e-3f &&
                  std::fabs(e.echoMix - 0.2f) < 1e-3f, "echo round-trips");
   check(!strcmp(e.tiltSide, "ECHO MIX") && !strcmp(e.tiltFront, "HARMONICS"), "tilt routing round-trips");
@@ -43,6 +43,14 @@ int main() {
                  "fx round-trip");
   check(c.fxAmount[0] == 0.0f && c.fxAmount[3] == 0.0f, "older patches load with the FX off");
   check(!fromText("hello", &c), "not a patch");
+  Patch ev; ev.envOn = true; ev.env[0] = 0.25f; ev.env[2] = 0.1f; ev.env[3] = 0.9f;
+  snprintf(ev.lfoDest, sizeof ev.lfoDest, "ECHO MIX"); ev.lfo[0] = 0.8f; ev.lfo[2] = 0.75f; ev.lfoSync = true;
+  char ht[768]; toText(ev, ht, sizeof ht);
+  Patch k; check(fromText(ht, &k) && k.envOn && std::fabs(k.env[0] - 0.25f) < 1e-3f && std::fabs(k.env[2] - 0.1f) < 1e-3f &&
+                 std::fabs(k.env[3] - 0.9f) < 1e-3f, "env round-trips");
+  check(!strcmp(k.lfoDest, "ECHO MIX") && std::fabs(k.lfo[0] - 0.8f) < 1e-3f && std::fabs(k.lfo[2] - 0.75f) < 1e-3f && k.lfoSync,
+        "lfo round-trips");
+  check(!c.envOn && !strcmp(c.lfoDest, "NONE") && !c.lfoSync, "older patches load with ENV off and no LFO");
   Patch junk;
   check(fromText("pocketdynamo patch 1\nbpm=nan\nroot=inf\nmacro=-nan\necho_mix=1e99\nfx_tone=LP nan\nmorph=0.25\n", &junk), "a patch with junk numbers loads");
   const Patch def;

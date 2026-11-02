@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 
 using namespace pd;
 
@@ -148,6 +149,119 @@ int main() {
     check(s.faults() == before + 1, "the bus guard catches it");
     check(runPeak(s, 100) > 0.05f, "and the note plays on through clean effects");
     printf("bus guard ok\n");
+  }
+  // The ADSR, block by block: 1.5 blocks per ms at 48 kHz / 32.
+  {
+    Envelope e;
+    e.setShape(Envelope::shape(10.0f, 100.0f, 0.5f, 200.0f, kBlock), kBlock);
+    float a, b;
+    e.gateOn();
+    int n = 0;
+    do { e.advance(&a, &b); ++n; } while (b < 1.0f && n < 1000);
+    check(n == 15, "attack reaches full level in its time");
+    for (int i = 0; i < 150; ++i) e.advance(&a, &b);   // the decay time: -80 dB of the way
+    check(std::fabs(b - 0.5f) < 1e-3f, "decay lands on the sustain level");
+    for (int i = 0; i < 100; ++i) e.advance(&a, &b);
+    check(b == 0.5f, "and holds there exactly");
+    e.setShape(Envelope::shape(10.0f, 100.0f, 0.8f, 200.0f, kBlock), kBlock);
+    for (int i = 0; i < 300; ++i) e.advance(&a, &b);
+    check(b == 0.8f, "a held note follows a live sustain change, up as well as down");
+    e.retrigger(50.0f);   // a ratchet hit decays to silence...
+    for (int i = 0; i < 300; ++i) e.advance(&a, &b);
+    check(b < 1e-3f, "a ratchet hit decays to silence under the ADSR");
+    e.retrigger(0.0f);    // ...and the ratchet's end returns to the ADSR's sustain
+    for (int i = 0; i < 400; ++i) e.advance(&a, &b);
+    check(b == 0.8f, "the ratchet's end returns to the sustain level");
+    e.gateOff();
+    n = 0;
+    while (e.active() && n < 1000) { e.advance(&a, &b); ++n; }
+    check(n >= 288 && n <= 296, "release: its time is from full level, so from 0.8 a little less");
+    printf("adsr ok\n");
+  }
+  // The instrument's ENV: on, new notes take the ADSR; off again, they take
+  // their engine's envelope back.
+  {
+    Synth s;
+    s.handle({EventType::Engine, (uint8_t)EngineId::BrocotFm, 0, 0.0f});
+    s.handle({EventType::Env, 3, 0, 2000.0f});   // a long release
+    s.handle({EventType::Env, 4, 0, 1.0f});
+    s.handle({EventType::NoteOn, 1, 100, 60.0f});
+    runPeak(s, 100);
+    s.handle({EventType::NoteOff, 1, 0, 0.0f});
+    runPeak(s, (int)(0.6f * kSampleRate / kBlock));   // past the engine's own 350 ms
+    check(s.activeVoices() == 1, "the ADSR's release outlasts the engine's");
+    s.handle({EventType::Env, 4, 0, 0.0f});
+    s.handle({EventType::AllOff, 0, 0, 0.0f});
+    runPeak(s, (int)(3.0f * kSampleRate / kBlock));
+    s.handle({EventType::NoteOn, 1, 100, 60.0f});
+    runPeak(s, 100);
+    s.handle({EventType::NoteOff, 1, 0, 0.0f});
+    runPeak(s, (int)(0.6f * kSampleRate / kBlock));
+    check(s.activeVoices() == 0, "ENV off: the engine's release again");
+    // Sustain 0: a pluck that dies while held.
+    s.handle({EventType::Env, 1, 0, 100.0f});
+    s.handle({EventType::Env, 2, 0, 0.0f});
+    s.handle({EventType::Env, 4, 0, 1.0f});
+    s.handle({EventType::NoteOn, 2, 100, 60.0f});
+    check(runPeak(s, 30) > 0.05f, "a pluck sounds");
+    runPeak(s, 300);
+    check(runPeak(s, 20) < 1e-3f, "and dies while the key is held");
+    printf("env ok\n");
+  }
+  // The LFO on its own.
+  {
+    Lfo l(kBlock);
+    l.setDepth(1.0f);
+    l.setRate(15.0f);   // 100 blocks a cycle
+    float lo = 1.0f, hi = -1.0f;
+    for (int sh = 0; sh < (int)LfoShape::Count; ++sh) {
+      l.setShape(sh);
+      lo = 1.0f; hi = -1.0f;
+      for (int i = 0; i < 1000; ++i) { const float v = l.advance(); lo = std::min(lo, v); hi = std::max(hi, v); }
+      check(lo >= -1.0f && hi <= 1.0f && hi - lo > 1.0f, "every shape swings within -1..1");
+    }
+    l.setShape((int)LfoShape::Square);
+    l.setSync(1.0f);   // a beat at 120 bpm: 0.5 s, 750 blocks
+    l.setTempo(120.0f);
+    int flips = 0;
+    float last = l.advance();
+    for (int i = 0; i < 7500; ++i) { const float v = l.advance(); flips += (v > 0) != (last > 0); last = v; }
+    check(flips >= 19 && flips <= 21, "synced to a beat: ten cycles in five seconds");
+    l.setDelay(100.0f);   // 150 blocks
+    l.restartDelay();
+    l.setSync(0.0f);
+    l.setRate(15.0f);
+    l.setShape((int)LfoShape::Square);
+    check(std::fabs(l.advance()) < 0.02f, "the delay starts the depth at zero");
+    for (int i = 0; i < 160; ++i) l.advance();
+    check(std::fabs(std::fabs(l.advance()) - 1.0f) < 1e-6f, "and has faded it in after its time");
+    printf("lfo ok\n");
+  }
+  // The LFO in the instrument: it moves what it's routed to, and routed
+  // nowhere it leaves the output bit-exact to no LFO at all.
+  {
+    auto render = [](bool lfo, LfoDest d) {
+      Synth s;
+      s.handle({EventType::Engine, (uint8_t)EngineId::BrocotFm, 0, 0.0f});
+      if (lfo) {
+        s.handle({EventType::Lfo, 0, 0, 5.0f});
+        s.handle({EventType::Lfo, 1, 0, 0.5f});
+        s.handle({EventType::Lfo, 4, (uint8_t)d, 0.0f});
+      }
+      s.handle({EventType::NoteOn, 1, 100, 60.0f});
+      uint64_t h = 1469598103934665603ull;
+      float out[kBlock];
+      for (int b = 0; b < 400; ++b) {
+        s.render(out);
+        for (float x : out) { uint32_t u; memcpy(&u, &x, 4); h = (h ^ u) * 1099511628211ull; }
+      }
+      return h;
+    };
+    const uint64_t plain = render(false, LfoDest::None);
+    check(render(true, LfoDest::None) == plain, "an LFO routed nowhere changes nothing");
+    check(render(true, LfoDest::Timbre) != plain, "the LFO moves TIMBRE");
+    check(render(true, LfoDest::Pitch) != plain, "the LFO moves the pitch");
+    printf("lfo routing ok\n");
   }
   return 0;
 }

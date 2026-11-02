@@ -13,7 +13,8 @@ its own notice and goes in NOTICE.md.
   - `audio_io`: ES8311 + I2S full duplex, render task on core 1.
   - `keys`: TCA8418 event FIFO.
   - `storage`: microSD on SPI2; the display owns SPI3.
-- `dsp/`: shared DSP (sine LUT, chords, ARS gap statistics, PRNG, Stern-Brocot),
+- `dsp/`: shared DSP (sine LUT, chords, ARS gap statistics, PRNG, Stern-Brocot,
+  the voice envelope with the ENV page's ADSR in `envelope.h`, the LFO in `lfo.h`),
   and the master bus: `fx.h` (TONE / GRIT / SHAPE slots and the limiter) and
   `echo.h` (the tape echo, whose SPACE turns it into a small room).
 - `engines/`: `pd::Engine` implementations (Plaits-shaped: note +

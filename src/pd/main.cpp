@@ -24,18 +24,25 @@
 // key of each pair takes side-to-side, the right front/back (z/x HARMONICS,
 // c/v TIMBRE, b/n MORPH, m/, MACRO, d/f echo feedback, s/g echo mix).
 // Switching tilt off returns the controls to their set values.
-// FN: z/x harmonics, c/v timbre, b/n morph, m/, macro, [/] volume 0..+12 dB,
+// FN: z/x harmonics, c/v timbre, b/n morph, m/, macro (or, by page, the FX,
+// ENV or LFO bars), [/] volume (0 dB to start, up to +12 dB),
 // q/w root down/up a step, 9/0 tempo, E echo time (off/1/8/1/8./1/4), D/F echo feedback, S/G echo mix,
-// P the FX page (z..', then edit TONE / GRIT / SHAPE / SPACE; T/Y/U pick
-// the effect in TONE / GRIT / SHAPE: dsp/fx.h), ` / 1 octave, TAB previous surface,
+// P cycles the pages SOUND -> FX -> ENV -> LFO (z.., then edit TONE / GRIT /
+// SHAPE / SPACE, the ADSR, or the LFO's RATE / DEPTH / SHAPE / DELAY; T/Y/U
+// pick the effect in TONE / GRIT / SHAPE: dsp/fx.h), A ENV on/off (off, each
+// engine keeps its own envelope), O the LFO free or synced to the tempo.
+// On the LFO page CTRL + a control's key routes the LFO instead of tilt
+// (t/y/u/i the FX bars, q/w pitch). ` / 1 octave, TAB previous surface,
 // \ previous engine,
 // BS undo the last dice, hold R to record from the mic (into SAMPLE/CLOUD's
 // take, up to 2.5 s), 2..8 load a patch from SD, SHIFT+2..8 save one,
 // L looper record -> play <-> overdub (synth/looper.h), K stop / clear. Holding a param, volume, root or tempo combo repeats.
 // MIDI in over USB (hw/usb_midi, midi/midi.h): notes play as virtual keys,
 // so strips, sustain and the looper treat them like keys; CC 64 sustain,
-// CC 16-19 (and 71/74/1/2) the four controls, pitch bend +-2, program
-// change picks the engine, MIDI clock sets the tempo.
+// CC 16-19 (and 71/74/2) the four controls, 20-23 the FX bars, 24-27 the
+// ENV bars, 28-31 the LFO bars (and 1, 72-78), 7 volume, 12/13/91 echo
+// feedback/time/mix (midi/midi.h), pitch bend +-2, program change picks the
+// engine, MIDI clock sets the tempo.
 // Serial: [ / ] volume, i = print state, B = silent CPU bench, S = SD status, K<row><col
 // hex><+|-> = press/release a key, M<hex>. = raw MIDI bytes (for scripted
 // tests), U = reboot into the bootloader (USB-MIDI builds, to flash),
@@ -112,8 +119,9 @@ void render(const float* in, float* out, size_t n) {
 // --- control side (core 0) ---------------------------------------------------
 
 // Codec DAC volume register: 0xBF = 0 dB, 0.5 dB per count. Past +12 dB the
-// speaker path distorts, so that is the ceiling.
-constexpr int kDacDefault = 0xBF + 12;   // +6 dB
+// speaker path distorts, so that is the ceiling. It starts at 0 dB: what's
+// quiet on the speaker is loud in headphones.
+constexpr int kDacDefault = 0xBF;        // 0 dB
 constexpr int kDacMax     = 0xBF + 24;   // +12 dB
 
 // Held FN combos auto-repeat: first repeat after kRepeatDelayMs, then every
@@ -153,6 +161,20 @@ const char* const kDestNames[kNumDests] = {"HARMONICS", "TIMBRE", "MORPH", "MACR
 // with an effect type), SPACE is the echo's diffusion.
 constexpr int kFxBars = 4;
 const char* const kFxBarNames[kFxBars] = {"TONE", "GRIT", "SHAPE", "SPACE"};
+
+// What the four bars (and FN+z..,) show. FN+P cycles them.
+enum Page { kPageSound, kPageFx, kPageEnv, kPageLfo, kNumPages };
+const char* const kPageNames[kNumPages] = {"SOUND", "FX", "ENV", "LFO"};
+
+// The LFO's destinations, in pd::LfoDest order: names on screen and in patches.
+const char* const kLfoDestNames[(int)pd::LfoDest::Count] = {
+    "NONE", "HARMONICS", "TIMBRE", "MORPH", "MACRO", "PITCH", "TONE", "GRIT", "SHAPE", "SPACE", "ECHO FB", "ECHO MIX"};
+// Synced, RATE picks a length of one LFO cycle, slowest first.
+struct LfoDiv { const char* label; float beats; };
+constexpr LfoDiv kLfoDivs[] = {{"4BAR", 16.0f}, {"2BAR", 8.0f}, {"1BAR", 4.0f}, {"1/2", 2.0f}, {"1/4", 1.0f},
+                               {"1/4T", 2.0f / 3.0f}, {"1/8", 0.5f}, {"1/8T", 1.0f / 3.0f}, {"1/16", 0.25f}, {"1/32", 0.125f}};
+constexpr int kNumLfoDivs = sizeof kLfoDivs / sizeof kLfoDivs[0];
+constexpr int kLfoShapes = (int)pd::LfoShape::Count;
 
 struct Ui {
   int   octave = 3;          // the surface root sits at MIDI 12 * (octave + 1) + root
@@ -194,7 +216,12 @@ struct Ui {
   int   echoDiv = -1;          // kEchoDivs index, -1 off
   float echoFb = 0.45f, echoMix = 0.35f;
   float echoSent[2] = {-1.0f, -1.0f};   // feedback, mix as last sent
-  bool  fxPage = false;        // the four bars (and FN+z..,) show FX instead of the sound
+  int   page = kPageSound;     // what the four bars (and FN+z..,) show
+  bool  envOn = false;         // the ADSR; off, each engine keeps its own envelope
+  float env[4] = {0.0f, 0.45f, 0.7f, 0.45f};   // ATTACK DECAY SUSTAIN RELEASE, as bars 0..1
+  float lfo[4] = {0.5f, 0.3f, 0.0f, 0.0f};     // RATE DEPTH SHAPE DELAY, as bars 0..1
+  bool  lfoSync = false;       // RATE in tempo divisions instead of Hz
+  int   lfoDest = 0;           // pd::LfoDest; 0 = routed nowhere
   int   fxType[3] = {0, 0, 0}; // TONE, GRIT, SHAPE effect, MasterFx::name()
   float fxAmount[kFxBars] = {};
   float fxSent[kFxBars] = {-1.0f, -1.0f, -1.0f, -1.0f};
@@ -268,9 +295,94 @@ void pushParams() {
   }
 }
 
-// FN+z..,: the sound's controls, or on the FX page the four FX bars.
+// --- the ENV and LFO pages: what a bar position means ---
+
+float envMs(int bar, float x) {   // ATTACK 2 ms..5 s; DECAY and RELEASE 5 ms..10 s
+  return bar == 0 ? 2.0f * std::pow(2500.0f, x) : 5.0f * std::pow(2000.0f, x);
+}
+float lfoHz(float x) { return 0.05f * std::pow(400.0f, x); }   // 0.05..20 Hz, 1 Hz mid-bar
+float lfoDelayMs(float x) { return 5000.0f * x * x; }           // 0..5 s
+int lfoDivIndex(float x) { return pd::clamp((int)std::lround(x * (kNumLfoDivs - 1)), 0, kNumLfoDivs - 1); }
+int lfoShapeIndex(float x) { return pd::clamp((int)std::lround(x * (kLfoShapes - 1)), 0, kLfoShapes - 1); }
+
+void sendEnv(int bar) {
+  send(pd::EventType::Env, (uint8_t)bar, 0, bar == 2 ? g_ui.env[2] : envMs(bar, g_ui.env[bar]));
+  g_ui.dirty = true;
+}
+void setEnvOn(bool on) {
+  g_ui.envOn = on;
+  send(pd::EventType::Env, 4, 0, on ? 1.0f : 0.0f);
+  g_ui.dirty = true;
+}
+void sendLfo(int bar) {
+  const float* l = g_ui.lfo;
+  switch (bar) {
+    case 0:
+      send(pd::EventType::Lfo, 0, 0, lfoHz(l[0]));
+      send(pd::EventType::Lfo, 5, 0, g_ui.lfoSync ? kLfoDivs[lfoDivIndex(l[0])].beats : 0.0f);
+      break;
+    case 1: send(pd::EventType::Lfo, 1, 0, l[1]); break;
+    case 2: send(pd::EventType::Lfo, 2, 0, (float)lfoShapeIndex(l[2])); break;
+    case 3: send(pd::EventType::Lfo, 3, 0, lfoDelayMs(l[3])); break;
+    default: break;
+  }
+  g_ui.dirty = true;
+}
+void sendLfoDest() { send(pd::EventType::Lfo, 4, (uint8_t)g_ui.lfoDest, 0.0f); g_ui.dirty = true; }
+void sendEnvLfo() {
+  for (int b = 0; b < 4; ++b) { sendEnv(b); sendLfo(b); }
+  setEnvOn(g_ui.envOn);
+  sendLfoDest();
+}
+
+const char* envBarLabel(int bar) {
+  static char label[16];
+  static const char* const kNames[4] = {"ATK", "DEC", "SUS", "REL"};
+  const float ms = envMs(bar, g_ui.env[bar]);
+  if (bar == 2) snprintf(label, sizeof label, "SUS %.0f%%", g_ui.env[2] * 100.0f);
+  else if (ms < 999.5f) snprintf(label, sizeof label, "%s %.0fms", kNames[bar], ms);
+  else snprintf(label, sizeof label, "%s %.1fs", kNames[bar], ms * 1e-3f);
+  return label;
+}
+
+const char* lfoBarLabel(int bar) {
+  static char label[16];
+  const float* l = g_ui.lfo;
+  switch (bar) {
+    case 0: {
+      const float hz = lfoHz(l[0]);
+      if (g_ui.lfoSync) snprintf(label, sizeof label, "RATE %s", kLfoDivs[lfoDivIndex(l[0])].label);
+      else if (hz < 0.995f) snprintf(label, sizeof label, "RATE .%02dHz", (int)std::lround(hz * 100.0f));
+      else if (hz < 9.95f) snprintf(label, sizeof label, "RATE %.1fHz", hz);
+      else snprintf(label, sizeof label, "RATE %.0fHz", hz);
+      break;
+    }
+    case 1: snprintf(label, sizeof label, "DEPTH %.0f%%", l[1] * 100.0f); break;
+    case 2: snprintf(label, sizeof label, "SHAPE %s", pd::lfoShapeName((pd::LfoShape)lfoShapeIndex(l[2]))); break;
+    default: snprintf(label, sizeof label, "DELAY %.1fs", lfoDelayMs(l[3]) * 1e-3f); break;
+  }
+  return label;
+}
+
+// FN+z..,: the four bars of the page on screen.
 void nudgeParam(pd::Param p, float d) {
-  float& v = g_ui.fxPage ? g_ui.fxAmount[(int)p] : g_ui.params[(int)p];
+  const int bar = (int)p;
+  if (g_ui.page == kPageEnv) {
+    g_ui.env[bar] = pd::clamp(g_ui.env[bar] + d, 0.0f, 1.0f);
+    sendEnv(bar);
+    if (!g_ui.envOn) { setEnvOn(true); flash("ENV ON"); }   // moving it means wanting it
+    return;
+  }
+  if (g_ui.page == kPageLfo) {
+    float& v = g_ui.lfo[bar];
+    // SHAPE steps a whole shape at a time.
+    if (bar == 2) v = (float)pd::clamp(lfoShapeIndex(v) + (d > 0.0f ? 1 : -1), 0, kLfoShapes - 1) / (kLfoShapes - 1);
+    else v = pd::clamp(v + d, 0.0f, 1.0f);
+    sendLfo(bar);
+    if (!g_ui.lfoDest) flash("LFO: HOLD CTRL + A KEY TO ROUTE");
+    return;
+  }
+  float& v = g_ui.page == kPageFx ? g_ui.fxAmount[bar] : g_ui.params[bar];
   v = pd::clamp(v + d, 0.0f, 1.0f);
   pushParams();
   g_ui.dirty = true;
@@ -397,7 +509,7 @@ bool tiltKey(char label, int* axis, int* dest) {
   const int i = (int)(at - kKeys);
   *axis = i & 1;
   *dest = kDests[i >> 1];
-  if (g_ui.fxPage && *dest <= kDestMacro) *dest = kDestFx0 + *dest;   // the bars on screen
+  if (g_ui.page == kPageFx && *dest <= kDestMacro) *dest = kDestFx0 + *dest;   // the bars on screen
   return true;
 }
 
@@ -410,6 +522,31 @@ void assignTilt(int axis, int dest) {
   else pushParams();
   static char msg[28];
   snprintf(msg, sizeof msg, "%s: %s", axis ? "TILT FRONT" : "TILT SIDE", kDestNames[dest]);
+  flash(msg);
+}
+
+// On the LFO page, hold CTRL and tap a key to route the LFO instead: either
+// key of a control's pair, d/f echo feedback, s/g echo mix, t/y/u/i the FX
+// bars TONE / GRIT / SHAPE / SPACE, q/w the pitch. The same key again
+// unroutes it.
+bool lfoKey(char label, int* dest) {
+  using D = pd::LfoDest;
+  static constexpr char kKeys[] = "zxcvbnm,dfsgtyuiqw";
+  static constexpr D kDests[] = {D::Harmonics, D::Harmonics, D::Timbre, D::Timbre, D::Morph, D::Morph,
+                                 D::Macro, D::Macro, D::EchoFb, D::EchoFb, D::EchoMix, D::EchoMix,
+                                 D::Tone, D::Grit, D::Shape, D::Space, D::Pitch, D::Pitch};
+  const char* at = label ? strchr(kKeys, label) : nullptr;
+  if (!at) return false;
+  *dest = (int)kDests[at - kKeys];
+  return true;
+}
+
+void assignLfo(int dest) {
+  g_ui.lfoDest = g_ui.lfoDest == dest ? 0 : dest;
+  if (g_ui.lfoDest && g_ui.lfo[1] <= 0.0f) { g_ui.lfo[1] = 0.3f; sendLfo(1); }   // routed means audible
+  sendLfoDest();
+  static char msg[24];
+  snprintf(msg, sizeof msg, "LFO: %s", g_ui.lfoDest ? kLfoDestNames[g_ui.lfoDest] : "OFF");
   flash(msg);
 }
 
@@ -692,7 +829,16 @@ struct MidiHandler {
   }
   void allOff() { ::allOff(); }
   void echoMix(float v) { g_ui.echoMix = v; pushParams(); }
+  void echoFeedback(float v) { g_ui.echoFb = 0.95f * v; pushParams(); }
+  void echoTime(float v) {   // off, then 1/8, 1/8., 1/4 in four equal zones
+    const int div = pd::clamp((int)(v * 4.0f), 0, 3) - 1;
+    if (div != g_ui.echoDiv) { g_ui.echoDiv = div; sendEcho(); }
+  }
   void fx(int bar, float v) { g_ui.fxAmount[bar] = v; pushParams(); }
+  void env(int bar, float v) { g_ui.env[bar] = v; sendEnv(bar); if (!g_ui.envOn) setEnvOn(true); }
+  void lfo(int bar, float v) { g_ui.lfo[bar] = bar == 2 ? (float)lfoShapeIndex(v) / (kLfoShapes - 1) : v; sendLfo(bar); }
+  // CC 7: -47.5 dB at 1 up to the +12 dB ceiling at 127, 0 mutes.
+  void volume(float v) { setDac(v <= 0.0f ? 0 : 0xBF - 96 + (int)std::lround(v * 120.0f)); }
   void tempo(float bpm) { if (std::fabs(bpm - g_ui.bpm) >= 0.5f) setTempo(std::round(bpm)); }
 };
 
@@ -777,6 +923,11 @@ pd::patch::Patch currentPatch() {
   snprintf(p.tiltFront, sizeof p.tiltFront, "%s", kDestNames[g_ui.tiltDest[1]]);
   for (int b = 0; b < 3; ++b) snprintf(p.fxType[b], sizeof p.fxType[b], "%s", pd::MasterFx::name(b, g_ui.fxType[b]));
   memcpy(p.fxAmount, g_ui.fxAmount, sizeof p.fxAmount);
+  p.envOn = g_ui.envOn;
+  memcpy(p.env, g_ui.env, sizeof p.env);
+  snprintf(p.lfoDest, sizeof p.lfoDest, "%s", kLfoDestNames[g_ui.lfoDest]);
+  memcpy(p.lfo, g_ui.lfo, sizeof p.lfo);
+  p.lfoSync = g_ui.lfoSync;
   return p;
 }
 
@@ -803,6 +954,13 @@ void applyPatch(const pd::patch::Patch& p) {
     for (int t = 0; t < pd::MasterFx::kTypes; ++t)
       if (!strcmp(p.fxType[b], pd::MasterFx::name(b, t))) g_ui.fxType[b] = t;
   for (int b = 0; b < kFxBars; ++b) g_ui.fxAmount[b] = pd::clamp(p.fxAmount[b], 0.0f, 1.0f);
+  g_ui.envOn = p.envOn;
+  for (int i = 0; i < 4; ++i) { g_ui.env[i] = pd::clamp(p.env[i], 0.0f, 1.0f); g_ui.lfo[i] = pd::clamp(p.lfo[i], 0.0f, 1.0f); }
+  g_ui.lfo[2] = (float)lfoShapeIndex(g_ui.lfo[2]) / (kLfoShapes - 1);
+  g_ui.lfoSync = p.lfoSync;
+  g_ui.lfoDest = 0;
+  for (int i = 0; i < (int)pd::LfoDest::Count; ++i) if (!strcmp(p.lfoDest, kLfoDestNames[i])) g_ui.lfoDest = i;
+  sendEnvLfo();
   sendEcho();
   send(pd::EventType::Engine, (uint8_t)g_ui.engine);
   pushParams();
@@ -819,6 +977,9 @@ void patchSlot(int slot) {
     return;
   }
   pd::patch::Patch p = currentPatch();
+  p.envOn = false;   // a patch from before ENV and the LFO plays without them
+  snprintf(p.lfoDest, sizeof p.lfoDest, "NONE");
+  p.lfoSync = false;
   bool tookTake = false;
   allOff();
   if (!pd::storage::load(slot, &p, pd::sampleStore(), &tookTake)) {
@@ -859,8 +1020,8 @@ uint32_t fnAction(char label) {
     case 'x': nudgeParam(pd::Param::Harmonics, +kStep); return 30;
     case 'c': nudgeParam(pd::Param::Timbre, -kStep); return 30;
     case 'v': nudgeParam(pd::Param::Timbre, +kStep); return 30;
-    case 'b': nudgeParam(pd::Param::Morph, -kStep); return 30;
-    case 'n': nudgeParam(pd::Param::Morph, +kStep); return 30;
+    case 'b': nudgeParam(pd::Param::Morph, -kStep); return g_ui.page == kPageLfo ? 250 : 30;   // LFO SHAPE: a shape a step
+    case 'n': nudgeParam(pd::Param::Morph, +kStep); return g_ui.page == kPageLfo ? 250 : 30;
     case 'm': nudgeParam(pd::Param::Macro, -kStep); return 30;
     case ',': nudgeParam(pd::Param::Macro, +kStep); return 30;
     case '[': setDac(g_ui.dacVol - 6); return 150;
@@ -884,9 +1045,21 @@ uint32_t fnAction(char label) {
       flash(msg);
       return 80;
     }
-    case 'p':   // FX page
-      g_ui.fxPage = !g_ui.fxPage;
-      flash(g_ui.fxPage ? "FX PAGE" : "SOUND PAGE");
+    case 'p': {   // the pages: SOUND -> FX -> ENV -> LFO
+      g_ui.page = (g_ui.page + 1) % kNumPages;
+      static char msg[16];
+      snprintf(msg, sizeof msg, "%s PAGE", kPageNames[g_ui.page]);
+      flash(msg);
+      return 0;
+    }
+    case 'a':   // the ADSR on/off
+      setEnvOn(!g_ui.envOn);
+      flash(g_ui.envOn ? "ENV ON" : "ENV OFF: EACH ENGINE'S OWN");
+      return 0;
+    case 'o':   // the LFO's rate: free in Hz, or synced to the tempo
+      g_ui.lfoSync = !g_ui.lfoSync;
+      sendLfo(0);
+      flash(g_ui.lfoSync ? "LFO SYNCED TO THE TEMPO" : "LFO FREE-RUNNING");
       return 0;
     case 't': case 'y': case 'u': {   // the effect in TONE, GRIT, SHAPE
       const int bar = label == 't' ? 0 : label == 'y' ? 1 : 2;
@@ -968,8 +1141,11 @@ void onKey(int r, int c, bool pressed) {
   }
 
   if (g_ui.ctrlDown) {
+    const char label = pd::keymap::kLabel[r][c];
     int axis, dest;
-    if (tiltKey(pd::keymap::kLabel[r][c], &axis, &dest)) { g_ui.ctrlUsed = true; assignTilt(axis, dest); return; }
+    if (g_ui.page == kPageLfo) {
+      if (lfoKey(label, &dest)) { g_ui.ctrlUsed = true; assignLfo(dest); return; }
+    } else if (tiltKey(label, &axis, &dest)) { g_ui.ctrlUsed = true; assignTilt(axis, dest); return; }
   }
 
   if (g_ui.fn) {
@@ -1029,19 +1205,31 @@ void onKey(int r, int c, bool pressed) {
 // canvas is 4-bit with a palette (16 KB, half of 8-bit RGB332): the screen
 // only uses these colours, and the drawing calls take their indices.
 M5Canvas g_canvas(&M5Cardputer.Display);
-enum : uint8_t { kPalBlack, kPalOrange, kPalWhite, kPalLightGrey, kPalDarkGrey, kPalCyan, kPalGreen, kPalRed, kPalYellow };
+enum : uint8_t { kPalBlack, kPalOrange, kPalWhite, kPalLightGrey, kPalDarkGrey, kPalCyan, kPalGreen, kPalRed, kPalYellow, kPalMagenta };
 void makePalette() {
   static const uint8_t kRgb[][3] = {   // the TFT_ colours, from their RGB565 values
       {0, 0, 0}, {255, 182, 0}, {255, 255, 255}, {214, 210, 214}, {123, 125, 123},
-      {0, 255, 255}, {0, 255, 0}, {255, 0, 0}, {255, 255, 0}};
+      {0, 255, 255}, {0, 255, 0}, {255, 0, 0}, {255, 255, 0}, {255, 64, 255}};
   g_canvas.createPalette();
   for (size_t i = 0; i < sizeof kRgb / sizeof kRgb[0]; ++i) g_canvas.setPaletteColor(i, kRgb[i][0], kRgb[i][1], kRgb[i][2]);
+}
+
+// The LFO's colour marks what it drives: magenta labels, and magenta bars on
+// its own page. ENV's bars are yellow, grey while it's off.
+void drawPageBar(int y, const char* label, float v, uint8_t labelColour, uint8_t barColour) {
+  auto& d = g_canvas;
+  d.setTextColor(labelColour, kPalBlack);
+  d.setCursor(4, y + 2);
+  d.print(label);
+  d.drawRect(64, y, 172, 12, kPalDarkGrey);
+  d.fillRect(65, y + 1, 170, 10, kPalBlack);
+  d.fillRect(65, y + 1, (int)(170 * v), 10, barColour);
 }
 
 // FX bars: cyan (the FX page's colour) or green while tilted.
 void drawFxBar(int y, int bar) {
   auto& d = g_canvas;
-  d.setTextColor(kPalCyan, kPalBlack);
+  d.setTextColor(g_ui.lfoDest == (int)pd::LfoDest::Tone + bar ? kPalMagenta : kPalCyan, kPalBlack);
   d.setCursor(4, y + 2);
   d.print(fxBarLabel(bar));
   d.setTextColor(kPalLightGrey, kPalBlack);
@@ -1052,6 +1240,7 @@ void drawFxBar(int y, int bar) {
 
 void drawBar(int y, const char* name, int p) {
   auto& d = g_canvas;
+  d.setTextColor(g_ui.lfoDest == (int)pd::LfoDest::Harmonics + p ? kPalMagenta : kPalLightGrey, kPalBlack);
   d.setCursor(4, y + 2);
   d.print(name);
   d.drawRect(64, y, 172, 12, kPalDarkGrey);
@@ -1153,13 +1342,25 @@ void draw(const pd::audio::Stats& s) {
   d.setCursor(206, 24);
   d.printf("%lu.%lu%%", (unsigned long)(s.loadAvgPermil / 10), (unsigned long)(s.loadAvgPermil % 10));
   d.setTextColor(kPalLightGrey, kPalBlack);
-  if (g_ui.fxPage) {
-    for (int b = 0; b < kFxBars; ++b) drawFxBar(36 + 16 * b, b);
-  } else {
-    drawBar(36, "HARMONICS", 0);
-    drawBar(52, "TIMBRE", 1);
-    drawBar(68, "MORPH", 2);
-    drawBar(84, "MACRO", 3);
+  switch (g_ui.page) {
+    case kPageFx:
+      for (int b = 0; b < kFxBars; ++b) drawFxBar(36 + 16 * b, b);
+      break;
+    case kPageEnv:
+      for (int b = 0; b < 4; ++b)
+        drawPageBar(36 + 16 * b, envBarLabel(b), g_ui.env[b], g_ui.envOn ? kPalYellow : kPalDarkGrey,
+                    g_ui.envOn ? kPalYellow : kPalDarkGrey);
+      break;
+    case kPageLfo:
+      for (int b = 0; b < 4; ++b)
+        drawPageBar(36 + 16 * b, lfoBarLabel(b), g_ui.lfo[b], g_ui.lfoDest ? kPalMagenta : kPalDarkGrey, kPalMagenta);
+      break;
+    default:
+      drawBar(36, "HARMONICS", 0);
+      drawBar(52, "TIMBRE", 1);
+      drawBar(68, "MORPH", 2);
+      drawBar(84, "MACRO", 3);
+      break;
   }
 
   if (g_ui.strip != Strip::Notes) {
@@ -1189,6 +1390,12 @@ void draw(const pd::audio::Stats& s) {
                   g_looper.lapUs() * 1e-6f, g_looper.events());
     if (st == pd::Looper::Playing || st == pd::Looper::Overdub)
       d.fillRect(4, 133, (int)(232 * g_looper.position(now)), 2, kPalGreen);
+  } else if (g_ui.page == kPageEnv) {
+    d.setTextColor(kPalDarkGrey, kPalBlack);
+    d.print(g_ui.envOn ? "ENV ON   FN+a: each engine's own" : "ENV OFF (each engine's own)  FN+a: on");
+  } else if (g_ui.page == kPageLfo) {
+    d.setTextColor(kPalDarkGrey, kPalBlack);
+    d.printf("LFO>%s CTRL+key:route FN+o:%s", kLfoDestNames[g_ui.lfoDest], g_ui.lfoSync ? "free" : "sync");
   } else {
     d.setTextColor(kPalDarkGrey, kPalBlack);
     d.print("`dice TAB surf BS strip \\eng CTRL tilt SPC sus");
@@ -1213,6 +1420,7 @@ void cpuBench() {
   allOff();   // through the UI, so its idea of what's sounding (the arp's too) stays true
   push(pd::EventType::Echo, 0, 0, 0.0f);
   for (int b = 0; b < kFxBars; ++b) push(pd::EventType::Fx, (uint8_t)b, (uint8_t)(b < 3 ? g_ui.fxType[b] : 0), 0.0f);
+  push(pd::EventType::Lfo, 4, (uint8_t)pd::LfoDest::None, 0.0f);   // nothing moving under the bench
   push(pd::EventType::AllOff, 0, 0, 0.0f);
   constexpr uint8_t kTag = 100;   // clear of the keys', MIDI's and the arp's tags
   for (int eng = 0; eng < (int)pd::EngineId::Count; ++eng) {
@@ -1233,13 +1441,14 @@ void cpuBench() {
   push(pd::EventType::Engine, (uint8_t)g_ui.engine, 0, 0.0f);
   for (int b = 0; b < kFxBars; ++b) { g_ui.fxSent[b] = -1.0f; if (b < 3) g_ui.fxTypeSent[b] = -1; }
   sendEcho();   // and pushParams(): the effects as they were
+  sendLfoDest();
   setDac(dac);
 }
 
 void printState(const pd::audio::Stats& s) {
   Serial.printf("pd engine=%s surface=%s strip=%s slot=%d sus=%d tilt=%d(%s=%.2f,%s=%.2f) voices=%d "
                 "load=%lu.%lu%% peak=%lu.%lu%% late=%lu xrun=%lu dac_db=%+.1f oct=%d root=%.2f bpm=%.0f "
-                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f fx=%s:%.2f,%s:%.2f,%s:%.2f,SPACE:%.2f page=%s heap=%lu/%lu "
+                "h=%.2f t=%.2f m=%.2f x=%.2f take=%.2fs/%d echo=%s/%.2f fx=%s:%.2f,%s:%.2f,%s:%.2f,SPACE:%.2f page=%s env=%s lfo=%s/%.2f heap=%lu/%lu "
                 "stack=%lu/%lu faults=%lu up=%lu\n",
                 pd::engineName((pd::EngineId)g_ui.engine), surf().name, stripName(g_ui.strip), g_ui.slot,
                 g_ui.sustain, g_ui.tilt, kDestNames[g_ui.tiltDest[0]], g_ui.tiltAxis[0],
@@ -1251,7 +1460,8 @@ void printState(const pd::audio::Stats& s) {
                 pd::sampleStore().ready() ? (float)pd::sampleStore().length() / pd::SampleStore::kRate : 0.0f,
                 pd::sampleStore().slices(), g_ui.echoDiv >= 0 ? kEchoDivs[g_ui.echoDiv].label : "off", g_ui.echoFb,
                 pd::MasterFx::name(0, g_ui.fxType[0]), fxNow(0), pd::MasterFx::name(1, g_ui.fxType[1]), fxNow(1),
-                pd::MasterFx::name(2, g_ui.fxType[2]), fxNow(2), fxNow(3), g_ui.fxPage ? "FX" : "SOUND",
+                pd::MasterFx::name(2, g_ui.fxType[2]), fxNow(2), fxNow(3), kPageNames[g_ui.page],
+                g_ui.envOn ? "on" : "off", kLfoDestNames[g_ui.lfoDest], g_ui.lfo[1],
                 (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(),
                 (unsigned long)pd::audio::stackFreeMin(), (unsigned long)uxTaskGetStackHighWaterMark(nullptr),
                 (unsigned long)g_synth.faults(), (unsigned long)(millis() / 1000));
@@ -1352,6 +1562,7 @@ void setup() {
   g_ui.arpGaps.Init(g_ui.seed | 1u);
   pushParams();
   setTempo(g_ui.bpm);
+  sendEnvLfo();
   xTaskCreatePinnedToCore(controlTask, "pd_ctrl", 8192, nullptr, 2, nullptr, 0);
 }
 

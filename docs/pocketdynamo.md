@@ -15,7 +15,8 @@ seven engines, effects, a looper and MIDI in over USB and Bluetooth.
   key, then play.
 - **Tilt it:** tap `ctrl`, then tip the Cardputer.
 
-It starts on ZX PULSE, the MAJOR 4THS layout, 120 bpm, at +6 dB.
+It starts on ZX PULSE, the MAJOR 4THS layout, 120 bpm, at 0 dB. That's
+quiet on the speaker and comfortable in headphones: turn it up with FN+`]`.
 
 ## The keyboard
 
@@ -30,6 +31,7 @@ The outer columns are controls:
 
 The keys play at a fixed velocity. Letting go of a key starts its engine's
 release: short for the buzzers and stabs, about 3 s for MODAL, so bells ring.
+To shape notes yourself, switch on the ADSR (see [The ENV page](#the-env-page-fnp-twice)).
 
 ### Layouts (`tab`, FN+`tab` back)
 
@@ -152,7 +154,8 @@ lets the tail ring out.
 
 ### The FX page (FN+`p`)
 
-FN+`p` flips the four bars from the sound's controls to four effects, and back.
+FN+`p` once, from the SOUND page, turns the four bars into four effects. Two
+more pages follow, ENV and LFO (see [Envelope and LFO](#envelope-and-lfo)).
 On the FX page FN+`z`/`x`, `c`/`v`, `b`/`n` and `m`/`,` set the effect amounts.
 Every effect is off at 0. The FX bars are cyan, so you can tell which page
 you're on.
@@ -166,6 +169,56 @@ you're on.
 
 The effects run in the order SHAPE → GRIT → TONE → echo. While any of them is
 on, a limiter at the end of the chain keeps peaks clean.
+
+## Envelope and LFO
+
+FN+`p` steps through four pages: SOUND → FX → ENV → LFO → SOUND. Each one
+puts its own four bars on FN+`z`/`x`, `c`/`v`, `b`/`n` and `m`/`,`.
+
+### The ENV page (FN+`p` twice)
+
+An ADSR for the volume of each note, instead of the engine's own envelope.
+
+| Bar | Keys | Range |
+|---|---|---|
+| **ATTACK** | FN+`z`/`x` | 2 ms – 5 s |
+| **DECAY** | FN+`c`/`v` | 5 ms – 10 s, down to the sustain level |
+| **SUSTAIN** | FN+`b`/`n` | the level while you hold the key, 0–100% |
+| **RELEASE** | FN+`m`/`,` | 5 ms – 10 s after you let go |
+
+- **FN+`a`** switches it on and off. Moving a bar switches it on.
+- **Off,** each engine keeps its own envelope, as before. The bars turn grey.
+- **New notes** take the ADSR. Notes already sounding keep the envelope they
+  started with. Moving a bar also reshapes the notes it's already playing.
+- **Sustain at 0** makes a pluck that dies away while you hold the key.
+
+### The LFO page (FN+`p` three times)
+
+One LFO for the whole instrument, which can wobble any control or the pitch.
+
+| Bar | Keys | What it does |
+|---|---|---|
+| **RATE** | FN+`z`/`x` | 0.05–20 Hz, or synced: 4 bars down to 1/32, with triplets |
+| **DEPTH** | FN+`c`/`v` | how far it swings. At 0 it does nothing |
+| **SHAPE** | FN+`b`/`n` | SINE, TRI, SAW, SQR (square), S&H (a random step each cycle) |
+| **DELAY** | FN+`m`/`,` | 0–5 s: how long it takes to fade in after you start playing from silence |
+
+- **Routing:** on this page, hold `ctrl` and tap a key to choose what the LFO
+  drives. Tilt keeps its routing.
+
+  | Hold `ctrl` + | the LFO drives |
+  |---|---|
+  | `z` or `x`, `c` or `v`, `b` or `n`, `m` or `,` | HARMONICS, TIMBRE, MORPH, MACRO |
+  | `t`, `y`, `u`, `i` | TONE, GRIT, SHAPE, SPACE |
+  | `d` or `f`, `s` or `g` | echo feedback, echo mix |
+  | `q` or `w` | pitch (vibrato) |
+
+  The same key again routes it nowhere. The bottom line shows where it goes,
+  and the control's label on the SOUND or FX page turns magenta.
+- **FN+`o`:** RATE free-running in Hz, or synced to the tempo.
+- **It swings around the control's set value,** so the bar still sets where
+  the wobble is centred. On pitch, low depths give a gentle vibrato and full
+  depth swings an octave.
 
 ## Tilt (`ctrl`)
 
@@ -189,6 +242,8 @@ The down key puts that control on side-to-side, the up key on front/back.
 | echo mix | `s` | `g` |
 
 - Routing something switches tilt on.
+- On the LFO page, `ctrl` plus a key routes the LFO instead. Go to another
+  page to route tilt.
 - Anything already on the other axis swaps over.
 - Tilted bars turn green. The echo label turns cyan while tilt drives the echo.
 - Switching tilt off returns everything to its set value.
@@ -239,11 +294,21 @@ What it responds to:
   it plays its own pitch with the chord's plain shape.
 - **Velocity** sets the level.
 - **CC 64** is sustain, and **CC 120/123** is all notes off.
-- **The four controls:** CC 16–19 (HARMONICS, TIMBRE, MORPH, MACRO). The
-  usual performance CCs work too: 71 HARMONICS, 74 TIMBRE, 1 (mod wheel)
-  MORPH, 2 (breath) MACRO.
-- **Effects:** CC 91 is the echo mix, and CC 20–23 are TONE, GRIT, SHAPE and
-  SPACE.
+- **Every bar has a CC,** so you can play from a keyboard without
+  touching the Cardputer:
+
+  | CC | |
+  |---|---|
+  | 16–19 | HARMONICS, TIMBRE, MORPH, MACRO (also 71 HARMONICS, 74 TIMBRE, 2 breath MACRO) |
+  | 20–23 | TONE, GRIT, SHAPE, SPACE |
+  | 24–27 | ATTACK, DECAY, SUSTAIN, RELEASE (also 73 attack, 75 decay, 72 release). Moving one switches ENV on |
+  | 28–31 | LFO RATE, DEPTH, SHAPE, DELAY (also 76 rate, 77 depth, 78 delay, and 1, the mod wheel, for depth) |
+  | 7 | volume: −47.5 dB to +12 dB, and 0 mutes |
+  | 12 | echo feedback |
+  | 13 | echo time: off, 1/8, dotted 1/8, 1/4 in four equal steps |
+  | 91 | echo mix |
+
+  The mod wheel used to drive MORPH. It's on CC 18 now.
 - **Pitch bend** covers ±2 semitones.
 - **Program change** 0–6 picks the engine.
 - **MIDI clock** sets the tempo, so the arp, ratchets, BREAK, the echo and the
@@ -258,8 +323,8 @@ What it responds to:
   `MIDI` and `BT` lights.
 - **Status line:** the strip, `SUS` and `TILT` (lit when on), the take (or REC
   with a timer), the echo time, and CPU load.
-- **Bars:** the four controls, or the FX page. Green means tilt is driving a
-  bar.
+- **Bars:** the four controls, or the FX, ENV or LFO page. Green means tilt
+  is driving a bar, and a magenta label means the LFO is.
 - **Strip row:** the 12 strip keys, while a strip is on.
 - **Bottom line:** messages (MUTATE, SAVED 3, TAKE 1.2s 6 SLICES…), the
   looper, or a key hint.
@@ -269,7 +334,9 @@ What it responds to:
 | FN + | |
 |---|---|
 | `z`/`x` `c`/`v` `b`/`n` `m`/`,` | the four controls (or FX amounts) down/up. Hold to sweep |
-| `p` | flip between the SOUND and FX pages |
+| `p` | the next page: SOUND → FX → ENV → LFO |
+| `a` | ENV (the ADSR) on/off |
+| `o` | the LFO's RATE free or synced to the tempo |
 | `t` / `y` / `u` | pick the TONE / GRIT / SHAPE effect |
 | `e` | echo time: 1/8 → 1/8. → 1/4 → off |
 | `d` / `f` | echo feedback down / up |
@@ -277,7 +344,7 @@ What it responds to:
 | `` ` `` / `1` | octave down / up |
 | `q` / `w` | root down / up one step (a semitone, or a 49th of an octave on the 49 layouts) |
 | `9` / `0` | tempo down / up, 40–300 bpm |
-| `[` / `]` | volume down / up in 3 dB steps, up to +12 dB |
+| `[` / `]` | volume down / up in 3 dB steps, from 0 dB at power-on up to +12 dB |
 | `tab` / `\` | previous layout / previous engine |
 | `del` | undo / redo the last dice |
 | `r` (hold) | record a take |
@@ -291,7 +358,7 @@ Holding a key that adjusts something repeats it.
 
 | Command | |
 |---|---|
-| `i` | print the state line (engine, voices, CPU load and peak, dropouts as `xrun`, heap, the least free stack of the audio and control tasks as `stack`, NaN catches as `faults`, uptime…) |
+| `i` | print the state line (engine, voices, CPU load and peak, dropouts as `xrun`, the page, `env` on/off, `lfo` destination/depth, heap, the least free stack of the audio and control tasks as `stack`, NaN catches as `faults`, uptime…) |
 | `B` | a silent CPU bench: each engine plays 8 held notes on the live instrument for a second, with the effects off, and reports its load, its peak (including the strikes) and any dropouts |
 | `S` | SD card status |
 | `[` / `]` | volume |

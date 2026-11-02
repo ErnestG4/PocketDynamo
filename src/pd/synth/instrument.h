@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The instrument: a voice pool, each voice an engine plus an envelope, all
-// sharing one set of controls. Pure C++ — the device render callback and the
+// sharing one set of controls, and one LFO that can drive any of them. Pure C++ — the device render callback and the
 // host tests drive the same object.
 #pragma once
 #include <new>
@@ -10,6 +10,7 @@
 #include "../dsp/echo.h"
 #include "../dsp/envelope.h"
 #include "../dsp/fx.h"
+#include "../dsp/lfo.h"
 #include "../engines/break.h"
 #include "../engines/brocot_fm.h"
 #include "../engines/cloud.h"
@@ -100,19 +101,26 @@ class Instrument {
       case EventType::Tempo:
         tempo_ = clamp(e.value, 20.0f, 400.0f);
         if (fx_) fx_->setTempo(tempo_);
+        lfo_.setTempo(tempo_);
         break;
       case EventType::Fx:
+        if (e.a <= MasterFx::kSlots) {   // the three slots and SPACE: the LFO's base values
+          fxBase_[e.a] = clamp(e.value, 0.0f, 1.0f);
+          if (e.a < MasterFx::kSlots) fxType_[e.a] = e.b;
+        }
         if (e.a < MasterFx::kSlots) { if (fx_) fx_->set(e.a, e.b, e.value); }
         else if (echo_) echo_->setSpace(e.value);
         break;
+      case EventType::Env: env(e.a, e.value); break;
+      case EventType::Lfo: lfo(e.a, e.b, e.value); break;
       case EventType::Bend:
         bend_ = clamp(e.value, -24.0f, 24.0f);
         break;
       case EventType::Echo:
         if (!echo_) break;
         if (e.a == 0) echo_->setTime(e.value);
-        else if (e.a == 1) echo_->setFeedback(e.value);
-        else if (e.a == 2) echo_->setMix(e.value);
+        else if (e.a == 1) { echoBase_[0] = e.value; echo_->setFeedback(e.value); }
+        else if (e.a == 2) { echoBase_[1] = e.value; echo_->setMix(e.value); }
         break;
       case EventType::AllOff:
         for (auto& v : voices_) { v.gated = false; v.env.gateOff(); }
@@ -127,16 +135,28 @@ class Instrument {
     float main[kBlock], aux[kBlock];
     int sounding = 0;
     for (const auto& v : voices_) sounding += v.env.active();
+    // The LFO: one step per block, onto a copy of the controls (or the
+    // pitch), so the set values stay what the UI sent.
+    float ctl[(int)Param::Count];
+    for (int i = 0; i < (int)Param::Count; ++i) ctl[i] = params_[i];
+    float pitchMod = 0.0f;
+    if (lfoDest_ != LfoDest::None) {
+      const float m = lfo_.advance();
+      const int d = (int)lfoDest_;
+      if (lfoDest_ == LfoDest::Pitch) pitchMod = 12.0f * lfo_.depth() * m;   // up to an octave, finer low down
+      else if (d <= (int)LfoDest::Macro) ctl[d - 1] = clamp(ctl[d - 1] + 0.5f * m, 0.0f, 1.0f);
+      else busMod(lfoDest_, 0.5f * m);
+    }
     int active = 0;   // published once, at the end: the UI core reads it
     for (auto& v : voices_) {
       if (!v.env.active()) continue;
       ++active;
       EngineParams p;
-      p.note = v.note + bend_;
-      p.harmonics = params_[(int)Param::Harmonics];
-      p.timbre = params_[(int)Param::Timbre];
-      p.morph = params_[(int)Param::Morph];
-      p.macro = params_[(int)Param::Macro];
+      p.note = v.note + bend_ + pitchMod;
+      p.harmonics = ctl[(int)Param::Harmonics];
+      p.timbre = ctl[(int)Param::Timbre];
+      p.morph = ctl[(int)Param::Morph];
+      p.macro = ctl[(int)Param::Macro];
       p.tempo = tempo_;
       p.voices = (uint8_t)sounding;
       p.trigger = v.trigger ? kTriggerRising : 0;
@@ -200,6 +220,7 @@ class Instrument {
     Engine* eng = nullptr;
     Envelope env;
     EngineId engine = EngineId::ZxPulse;
+    bool adsr = false;   // shaped by the ENV page, not its engine
     float note = 60.0f;
     uint8_t tag = 0;
     bool gated = false;
@@ -236,11 +257,15 @@ class Instrument {
     if (!v) for (auto& c : voices_)                                    // oldest released
       if (c.env.released() && (!v || c.age < v->age)) v = &c;
     if (!v) for (auto& c : voices_) if (!v || c.age < v->age) v = &c;  // oldest
+    bool held = false;   // a note from silence brings the LFO's delay in again
+    for (const auto& c : voices_) held |= c.gated;
+    if (!held) lfo_.restartDelay();
     v->note = note;
     v->tag = tag;
     v->gated = true;
     v->trigger = true;
-    if (v->engine != engine_ || !v->env.active()) v->env.setTimes(2.0f, releaseMs(engine_), kBlock);
+    if (adsrOn_) { v->env.setShape(adsr_, kBlock); v->adsr = true; }
+    else if (v->engine != engine_ || !v->env.active() || v->adsr) { v->env.setTimes(2.0f, releaseMs(engine_), kBlock); v->adsr = false; }
     const bool rebuilt = v->engine != engine_;
     if (rebuilt) v->build(engine_);
     // A modal bank left ringing when its voice went idle would come back as
@@ -262,8 +287,53 @@ class Instrument {
       if (v.gated && v.tag == tag) { v.env.retrigger(decayMs); v.trigger = true; }
   }
 
+  // The ENV page's ADSR. While it's on, new notes take its shape instead of
+  // their engine's, and moving it reshapes the notes it already shaped.
+  void env(uint8_t field, float v) {
+    if (field == 4) { adsrOn_ = v > 0.5f; return; }
+    if (field > 3) return;
+    adsrSet_[field] = field == 2 ? clamp(v, 0.0f, 1.0f) : clamp(v, 0.0f, 60000.0f);
+    adsr_ = Envelope::shape(adsrSet_[0], adsrSet_[1], adsrSet_[2], adsrSet_[3], kBlock);
+    for (auto& c : voices_) if (c.adsr) c.env.setShape(adsr_, kBlock);
+  }
+
+  void lfo(uint8_t field, uint8_t b, float v) {
+    switch (field) {
+      case 0: lfo_.setRate(v); break;
+      case 1: lfo_.setDepth(v); break;
+      case 2: lfo_.setShape((int)v); break;
+      case 3: lfo_.setDelay(v); break;
+      case 4: {
+        const LfoDest d = b < (uint8_t)LfoDest::Count ? (LfoDest)b : LfoDest::None;
+        if (d != lfoDest_) busMod(lfoDest_, 0.0f);   // what it leaves goes back to its set value
+        lfoDest_ = d;
+        break;
+      }
+      case 5: lfo_.setSync(v); break;
+      default: break;
+    }
+  }
+
+  // The LFO on the master bus: the set value plus `m`, or with m = 0 the set
+  // value alone. The FX amounts glide (~4 ms), so a block step doesn't zipper.
+  void busMod(LfoDest d, float m) {
+    const int bar = (int)d - (int)LfoDest::Tone;
+    if (bar >= 0 && bar < MasterFx::kSlots) { if (fx_) fx_->set(bar, fxType_[bar], fxBase_[bar] + m); }
+    else if (d == LfoDest::Space) { if (echo_) echo_->setSpace(fxBase_[3] + m); }
+    else if (d == LfoDest::EchoFb) { if (echo_) echo_->setFeedback(echoBase_[0] + m); }
+    else if (d == LfoDest::EchoMix) { if (echo_) echo_->setMix(echoBase_[1] + m); }
+  }
+
   Voice voices_[kVoices];
   float params_[(int)Param::Count];
+  bool adsrOn_ = false;
+  float adsrSet_[4] = {2.0f, 200.0f, 0.7f, 200.0f};   // attack ms, decay ms, sustain, release ms
+  EnvShape adsr_ = Envelope::shape(2.0f, 200.0f, 0.7f, 200.0f, kBlock);
+  Lfo lfo_{kBlock};
+  LfoDest lfoDest_ = LfoDest::None;
+  float fxBase_[MasterFx::kSlots + 1] = {};   // TONE, GRIT, SHAPE, SPACE as set
+  uint8_t fxType_[MasterFx::kSlots] = {};
+  float echoBase_[2] = {0.45f, 0.35f};        // echo feedback, mix as set
   EngineId engine_ = EngineId::ZxPulse;
   float master_ = 1.0f;
   float tempo_ = 120.0f;
