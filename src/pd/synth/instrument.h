@@ -287,10 +287,20 @@ class Instrument {
       if (v.gated && v.tag == tag) { v.env.retrigger(decayMs); v.trigger = true; }
   }
 
-  // The ENV page's ADSR. While it's on, new notes take its shape instead of
+  // The ENV page's ADSR. While it's on, notes take its shape instead of
   // their engine's, and moving it reshapes the notes it already shaped.
+  // Switching it on or off reshapes the held notes too (released ones finish
+  // as they started), so the switch is heard at once.
   void env(uint8_t field, float v) {
-    if (field == 4) { adsrOn_ = v > 0.5f; return; }
+    if (field == 4) {
+      adsrOn_ = v > 0.5f;
+      for (auto& c : voices_) {
+        if (!c.env.active() || c.env.released()) continue;
+        if (adsrOn_) { c.env.setShape(adsr_, kBlock); c.adsr = true; }
+        else if (c.adsr) { c.env.setTimes(2.0f, releaseMs(c.engine), kBlock); c.adsr = false; }
+      }
+      return;
+    }
     if (field > 3) return;
     adsrSet_[field] = field == 2 ? clamp(v, 0.0f, 1.0f) : clamp(v, 0.0f, 60000.0f);
     adsr_ = Envelope::shape(adsrSet_[0], adsrSet_[1], adsrSet_[2], adsrSet_[3], kBlock);
@@ -327,8 +337,10 @@ class Instrument {
   Voice voices_[kVoices];
   float params_[(int)Param::Count];
   bool adsrOn_ = false;
-  float adsrSet_[4] = {2.0f, 200.0f, 0.7f, 200.0f};   // attack ms, decay ms, sustain, release ms
-  EnvShape adsr_ = Envelope::shape(2.0f, 200.0f, 0.7f, 200.0f, kBlock);
+  // The stock ADSR (the UI sends its own at boot): plainly not any engine's
+  // envelope, so switching it on is heard.
+  float adsrSet_[4] = {10.0f, 330.0f, 0.5f, 700.0f};   // attack ms, decay ms, sustain, release ms
+  EnvShape adsr_ = Envelope::shape(10.0f, 330.0f, 0.5f, 700.0f, kBlock);
   Lfo lfo_{kBlock};
   LfoDest lfoDest_ = LfoDest::None;
   float fxBase_[MasterFx::kSlots + 1] = {};   // TONE, GRIT, SHAPE, SPACE as set

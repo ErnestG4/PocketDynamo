@@ -34,7 +34,7 @@ struct Patch {
   // The ENV page's ADSR and the LFO page, as bar positions 0..1. A patch
   // from before them reads as ENV off and the LFO routed nowhere.
   bool  envOn = false;
-  float env[4] = {0.0f, 0.45f, 0.7f, 0.45f};       // attack decay sustain release
+  float env[4] = {0.2f, 0.55f, 0.5f, 0.65f};       // attack decay sustain release (the stock ADSR)
   char  lfoDest[12] = "NONE";
   float lfo[4] = {0.5f, 0.3f, 0.0f, 0.0f};         // rate depth shape delay
   bool  lfoSync = false;

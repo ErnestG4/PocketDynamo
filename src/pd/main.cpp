@@ -211,7 +211,7 @@ struct Ui {
   float echoSent[2] = {-1.0f, -1.0f};   // feedback, mix as last sent
   int   page = ctl::kSoundPage;   // what the four bars (and FN+z..,) show (FN+P cycles them)
   bool  envOn = false;         // the ADSR; off, each engine keeps its own envelope
-  float env[4] = {0.0f, 0.45f, 0.7f, 0.45f};   // ATTACK DECAY SUSTAIN RELEASE, as bars 0..1
+  float env[4] = {0.2f, 0.55f, 0.5f, 0.65f};   // ATTACK DECAY SUSTAIN RELEASE, as bars 0..1: 10 ms, 330 ms, 50%, 700 ms
   float lfo[4] = {0.5f, 0.3f, 0.0f, 0.0f};     // RATE DEPTH SHAPE DELAY, as bars 0..1
   bool  lfoSync = false;       // RATE in tempo divisions instead of Hz
   Ctl   lfoDest = ctl::kNone;  // what the LFO drives

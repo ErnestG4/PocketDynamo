@@ -52,6 +52,10 @@ class Envelope {
     blocksPerMs_ = kSampleRate / (1000.0f * (float)block);
     if (!ratchet_) { decayMul_ = holdMul_; target_ = sustain_; }
     if (stage_ == Stage::Hold && level_ != target_ && decayMul_ < 1.0f) stage_ = Stage::Decay;
+    // Back to a shape with no decay (the ADSR switched off under a held
+    // note): climb back to full at the attack rate rather than stay put.
+    if (!ratchet_ && (stage_ == Stage::Hold || stage_ == Stage::Decay) && decayMul_ >= 1.0f && level_ < target_)
+      stage_ = Stage::Attack;
   }
 
   void gateOn() { stage_ = Stage::Attack; ratchet_ = false; decayMul_ = holdMul_; target_ = sustain_; }

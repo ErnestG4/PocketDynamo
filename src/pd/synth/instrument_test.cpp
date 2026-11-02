@@ -208,6 +208,36 @@ int main() {
     check(runPeak(s, 20) < 1e-3f, "and dies while the key is held");
     printf("env ok\n");
   }
+  // Switching ENV on reshapes a note that's already held, at once and with
+  // the stock settings; switching it off brings the note back to full. Each
+  // window is measured against an untouched copy of the same note at the
+  // same moment, since the engine's own level drifts as a note holds.
+  {
+    Synth s, ref;
+    for (Synth* x : {&s, &ref}) {
+      x->handle({EventType::Engine, (uint8_t)EngineId::BrocotFm, 0, 0.0f});
+      x->handle({EventType::NoteOn, 1, 100, 60.0f});
+    }
+    auto ratio = [&](int blocks) {   // RMS of s over ref, for the next `blocks`
+      float a[kBlock], b[kBlock];
+      double ea = 0.0, eb = 0.0;
+      for (int k = 0; k < blocks; ++k) {
+        s.render(a); ref.render(b);
+        for (size_t i = 0; i < kBlock; ++i) { ea += a[i] * a[i]; eb += b[i] * b[i]; }
+      }
+      return std::sqrt(ea / eb);
+    };
+    check(std::fabs(ratio(300) - 1.0) < 1e-6, "the same note twice");
+    s.handle({EventType::Env, 4, 0, 1.0f});   // FN+a, nothing else touched
+    ratio(1500);                               // the stock decay, 330 ms, and then some
+    const double on = ratio(300);
+    check(on > 0.45 && on < 0.55, "ENV on: the held note falls to the stock 50% sustain");
+    s.handle({EventType::Env, 4, 0, 0.0f});
+    ratio(100);
+    const double off = ratio(300);
+    check(off > 0.98 && off < 1.02, "ENV off: the held note climbs back to full");
+    printf("env switch on a held note ok (%.3f on, %.3f off)\n", on, off);
+  }
   // The LFO on its own.
   {
     Lfo l(kBlock);

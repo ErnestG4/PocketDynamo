@@ -187,9 +187,13 @@ An ADSR for the volume of each note, instead of the engine's own envelope.
 | **RELEASE** | FN+`m`/`,` | 5 ms – 10 s after you let go |
 
 - **FN+`a`** switches it on and off. Moving a bar switches it on.
+- **It starts as** a 10 ms attack, a 330 ms decay to 50% and a 700 ms
+  release: a pluck that settles and rings on, so you hear it the moment it's
+  on.
 - **Off,** each engine keeps its own envelope, as before. The bars turn grey.
-- **New notes** take the ADSR. Notes already sounding keep the envelope they
-  started with. Moving a bar also reshapes the notes it's already playing.
+- **The switch is heard at once:** held notes take the ADSR, or go back to
+  their engine's envelope, as you press FN+`a`. Notes you've already let go
+  of finish as they started. Moving a bar reshapes the notes it's playing.
 - **Sustain at 0** makes a pluck that dies away while you hold the key.
 
 ### The LFO page (FN+`p` three times)
