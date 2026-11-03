@@ -12,12 +12,17 @@ An 8-voice old-school synth for the **M5Stack Cardputer ADV**.
   - a filter
   - crush, 1-bit PWM and drive
   - wavefolding, ring mod and tremolo
+- **Shaping:**
+  - an optional ADSR for each note, or each engine's own envelope
+  - an LFO, free or tempo-synced, that can drive any control, effect or the pitch
 - **A keyboard laid out for playing:**
   - scale-locked layouts, a chromatic one, and 49-step tunings
   - pure-ratio layouts: a chain of pure fifths, the Stern-Brocot tree, and IMPRESSION, where the first key you hold is a root and every other key plays a colour of it
   - CHORD, RATCHET and ARP strips
 - **Tilt** that can play any control or effect.
-- **MIDI in** over USB and Bluetooth.
+- **MIDI in** over USB and Bluetooth, with every control on a CC, and four
+  page knobs that reach all of them, so you can play it from a keyboard
+  without touching the Cardputer.
 - **Also:** a looper, and patches saved to the SD card.
 
 ## Install
@@ -36,7 +41,9 @@ See the **[manual](docs/pocketdynamo.md)**. In short:
 - **Engine:** `\` changes it.
 - **Layout:** `tab` changes it.
 - **Controls:** hold `fn` for the four controls on `z x c v b n m ,`.
-- **Effects:** FN+`p` switches those keys to the effects.
+- **Pages:** FN+`p` switches those keys to the effects, then the ADSR, then
+  the LFO. FN+`a` switches the ADSR on.
+- **Volume:** it starts at 0 dB. FN+`]` turns it up.
 
 ## Build
 

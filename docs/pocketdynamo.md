@@ -1,7 +1,8 @@
 # PocketDynamo manual
 
 PocketDynamo is an 8-voice synthesizer for the M5Stack Cardputer ADV. It has
-seven engines, effects, a looper and MIDI in over USB and Bluetooth.
+seven engines, effects, an optional ADSR, an LFO, a looper and MIDI in over USB
+and Bluetooth, with every control on a MIDI CC.
 
 ## Quick start
 
@@ -14,6 +15,10 @@ seven engines, effects, a looper and MIDI in over USB and Bluetooth.
 - **Hold a chord:** press `del` to reach the CHORD strip, hold a number-row
   key, then play.
 - **Tilt it:** tap `ctrl`, then tip the Cardputer.
+- **Shape the notes:** FN+`a` switches on the ADSR. FN+`p` steps through the
+  pages to reach its bars, then on to the LFO.
+- **Play it from a MIDI keyboard:** every bar has a CC (see
+  [MIDI](#midi-usb-and-bluetooth)).
 
 It starts on ZX PULSE, the MAJOR 4THS layout, 120 bpm, at 0 dB. That's
 quiet on the speaker and comfortable in headphones: turn it up with FN+`]`.
@@ -247,7 +252,8 @@ The down key puts that control on side-to-side, the up key on front/back.
 
 - Routing something switches tilt on.
 - On the LFO page, `ctrl` plus a key routes the LFO instead. Go to another
-  page to route tilt.
+  page to route tilt. On the ENV page, it routes the SOUND controls, as on the
+  SOUND page. Tilt can't drive the ENV or LFO bars.
 - Anything already on the other axis swaps over.
 - Tilted bars turn green. The echo label turns cyan while tilt drives the echo.
 - Switching tilt off returns everything to its set value.
@@ -272,8 +278,11 @@ ratchet, control moves and engine changes.
 FN+`2`…`8` loads a patch from the SD card, and FN+`shift`+`2`…`8` saves one.
 
 - **What a patch holds:** the engine, layout, root, octave and tempo, the four
-  controls, the echo, the FX page and the tilt routing, plus the take.
-- **What it doesn't:** the strip, whether tilt is on, or the volume.
+  controls, the echo, the effects, ENV (on or off, and its bars), the LFO (its
+  bars, sync and where it's routed), the tilt routing, plus the take.
+- **What it doesn't:** the strip, whether tilt is on, the page on screen, or
+  the volume.
+- A patch saved before ENV and the LFO existed loads with both off.
 - Patches are plain text in `/pocketdynamo/pN.txt`, so you can edit them by
   hand. The take goes alongside as `pN.wav`.
 - Any mono 16-bit WAV saved as `pN.wav` next to a patch loads, up to 2.5 s.
@@ -332,6 +341,12 @@ What it responds to:
 
 `MIDI` lights in the top right while messages arrive.
 
+**If it starts on the wrong page or volume:** many DAWs and controllers send
+their knob values when a device connects, including whenever PocketDynamo
+restarts. A knob on CC 106 picks the page, and one on CC 7 sets the volume. If
+that's not what you want, turn off your DAW's "send values on connect" (or
+similar) option, or move those knobs to other CCs.
+
 ## The screen
 
 - **Top:** the engine, the layout, root and octave, tempo, volume, and the
@@ -342,7 +357,8 @@ What it responds to:
   is driving a bar, and a magenta label means the LFO is.
 - **Strip row:** the 12 strip keys, while a strip is on.
 - **Bottom line:** messages (MUTATE, SAVED 3, TAKE 1.2s 6 SLICES…), the
-  looper, or a key hint.
+  looper, or a key hint. On the ENV page it says whether ENV is on, and on
+  the LFO page what the LFO drives.
 
 ## The function layer (hold `fn`)
 
